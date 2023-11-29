@@ -101,6 +101,11 @@ AVAIL (flush32, TARGET_ZICBOM && !TARGET_64BIT)
 AVAIL (flush64, TARGET_ZICBOM && TARGET_64BIT)
 AVAIL (inval32, TARGET_ZICBOM && !TARGET_64BIT)
 AVAIL (inval64, TARGET_ZICBOM && TARGET_64BIT)
+AVAIL (zacas_amocas32_32, TARGET_ZACAS && !TARGET_64BIT)
+AVAIL (zacas_amocas32_64, TARGET_ZACAS && TARGET_64BIT)
+AVAIL (zacas_amocas64_32, TARGET_ZACAS && !TARGET_64BIT)
+AVAIL (zacas_amocas64_64, TARGET_ZACAS && TARGET_64BIT)
+AVAIL (zacas_amocas128, TARGET_ZACAS && TARGET_64BIT)
 AVAIL (zero32,  TARGET_ZICBOZ && !TARGET_64BIT)
 AVAIL (zero64,  TARGET_ZICBOZ && TARGET_64BIT)
 AVAIL (prefetchi32, TARGET_ZICBOP && !TARGET_64BIT)
@@ -168,6 +173,8 @@ AVAIL (cvelw, TARGET_XCVELW && !TARGET_64BIT)
 #define RISCV_ATYPE_QI intQI_type_node
 #define RISCV_ATYPE_HI intHI_type_node
 #define RISCV_ATYPE_SI intSI_type_node
+#define RISCV_ATYPE_DI intDI_type_node
+#define RISCV_ATYPE_TI intTI_type_node
 #define RISCV_ATYPE_VOID_PTR ptr_type_node
 #define RISCV_ATYPE_INT_PTR integer_ptr_type_node
 
@@ -188,6 +195,7 @@ AVAIL (cvelw, TARGET_XCVELW && !TARGET_64BIT)
 static const struct riscv_builtin_description riscv_builtins[] = {
   #include "riscv-cmo.def"
   #include "riscv-scalar-crypto.def"
+  #include "riscv-buildins-zacas.def"
   #include "corev.def"
 
   DIRECT_BUILTIN (frflags, RISCV_USI_FTYPE, hard_float),
