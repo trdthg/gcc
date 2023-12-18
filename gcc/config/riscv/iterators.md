@@ -50,6 +50,9 @@
 ;; Iterator for sub-32-bit integer modes.
 (define_mode_iterator SHORT [QI HI])
 
+;; Iterator for SImode and DImode constant generation.
+(define_mode_iterator SIDITI [SI DI TI])
+
 ;; Iterator for HImode constant generation.
 (define_mode_iterator HISI [HI SI])
 
@@ -112,6 +115,9 @@
 
 ;; This attribute gives the format suffix for atomic memory operations.
 (define_mode_attr amo [(SI "w") (DI "d")])
+
+;; This attribute gives the format suffix for amocas operations.
+(define_mode_attr amocas [(SI "w") (DI "d") (TI "q")])
 
 ;; This attribute gives the upper-case mode name for one unit of a
 ;; floating-point mode.

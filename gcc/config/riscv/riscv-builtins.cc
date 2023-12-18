@@ -41,6 +41,10 @@ along with GCC; see the file COPYING3.  If not see
 #include "backend.h"
 #include "gimple.h"
 #include "gimple-iterator.h"
+#include "alias.h"
+#include "emit-rtl.h"
+#include "builtins.h"
+#include "explow.h"
 
 /* Macros to create an enumeration identifier for a function prototype.  */
 #define RISCV_FTYPE_NAME0(A) RISCV_##A##_FTYPE
@@ -64,7 +68,10 @@ enum riscv_builtin_type {
   RISCV_BUILTIN_DIRECT,
 
   /* Likewise, but with return type VOID.  */
-  RISCV_BUILTIN_DIRECT_NO_TARGET
+  RISCV_BUILTIN_DIRECT_NO_TARGET,
+
+  /* for zacas.  */
+  RISCV_BUILTIN_ZACAS,
 };
 
 /* Declare an availability predicate for built-in functions.  */
@@ -101,11 +108,11 @@ AVAIL (flush32, TARGET_ZICBOM && !TARGET_64BIT)
 AVAIL (flush64, TARGET_ZICBOM && TARGET_64BIT)
 AVAIL (inval32, TARGET_ZICBOM && !TARGET_64BIT)
 AVAIL (inval64, TARGET_ZICBOM && TARGET_64BIT)
-AVAIL (zacas_amocas32_32, TARGET_ZACAS && !TARGET_64BIT)
-AVAIL (zacas_amocas32_64, TARGET_ZACAS && TARGET_64BIT)
-AVAIL (zacas_amocas64_32, TARGET_ZACAS && !TARGET_64BIT)
-AVAIL (zacas_amocas64_64, TARGET_ZACAS && TARGET_64BIT)
-AVAIL (zacas_amocas128, TARGET_ZACAS && TARGET_64BIT)
+AVAIL (zacas_amocassi32, TARGET_ZACAS && !TARGET_64BIT)
+AVAIL (zacas_amocassi64, TARGET_ZACAS && TARGET_64BIT)
+AVAIL (zacas_amocasdi32, TARGET_ZACAS && !TARGET_64BIT)
+AVAIL (zacas_amocasdi64, TARGET_ZACAS && TARGET_64BIT)
+AVAIL (zacas_amocasti128, TARGET_ZACAS && TARGET_64BIT)
 AVAIL (zero32,  TARGET_ZICBOZ && !TARGET_64BIT)
 AVAIL (zero64,  TARGET_ZICBOZ && TARGET_64BIT)
 AVAIL (prefetchi32, TARGET_ZICBOP && !TARGET_64BIT)
@@ -313,6 +320,36 @@ riscv_prepare_builtin_arg (struct expand_operand *op, tree exp, unsigned argno)
   create_input_operand (op, expand_normal (arg), TYPE_MODE (TREE_TYPE (arg)));
 }
 
+static rtx
+get_builtin_sync_mem (tree loc, machine_mode mode)
+{
+  rtx addr, mem;
+  int addr_space = TYPE_ADDR_SPACE (POINTER_TYPE_P (TREE_TYPE (loc))
+				    ? TREE_TYPE (TREE_TYPE (loc))
+				    : TREE_TYPE (loc));
+  scalar_int_mode addr_mode = targetm.addr_space.address_mode (addr_space);
+
+  addr = expand_expr (loc, NULL_RTX, addr_mode, EXPAND_SUM);
+  addr = convert_memory_address (addr_mode, addr);
+
+  /* Note that we explicitly do not want any alias information for this
+     memory, so that we kill all other live memories.  Otherwise we don't
+     satisfy the full barrier semantics of the intrinsic.  */
+  mem = gen_rtx_MEM (mode, addr);
+
+  set_mem_addr_space (mem, addr_space);
+
+  mem = validize_mem (mem);
+
+  /* The alignment needs to be at least according to that of the mode.  */
+  set_mem_align (mem, MAX (GET_MODE_ALIGNMENT (mode),
+			   get_pointer_alignment (loc)));
+  set_mem_alias_set (mem, ALIAS_SET_MEMORY_BARRIER);
+  MEM_VOLATILE_P (mem) = 1;
+
+  return mem;
+}
+
 /* Expand instruction ICODE as part of a built-in function sequence.
    Use the first NOPS elements of OPS as the instruction's operands.
    HAS_TARGET_P is true if operand 0 is a target; it is false if the
@@ -356,6 +393,33 @@ riscv_expand_builtin_direct (enum insn_code icode, rtx target, tree exp,
     riscv_prepare_builtin_arg (&ops[opno++], exp, argno);
 
   return riscv_expand_builtin_insn (icode, opno, ops, has_target_p);
+}
+
+static rtx
+riscv_expand_builtin_zacas (enum insn_code icode, rtx target, tree exp)
+{
+  struct expand_operand ops[3];
+
+  /* Map any target to operand 0.  */
+  int opno = 0;
+  /* Map the arguments to the other operands.  */
+  gcc_assert (opno + call_expr_nargs (exp)
+	      == insn_data[icode].n_generator_args);
+  for (int argno = 0; argno < call_expr_nargs (exp); argno++) {
+    if (argno == 2) {
+      expand_operand *op = &ops[opno++];
+
+      tree arg = CALL_EXPR_ARG (exp, argno);
+      machine_mode mode = TYPE_MODE (TREE_TYPE (arg));
+      rtx mem = get_builtin_sync_mem (arg, mode);
+      // rtx mem = expand_normal (arg)
+      create_fixed_operand (op, mem);
+    } else {
+      riscv_prepare_builtin_arg (&ops[opno++], exp, argno);
+    }
+  }
+
+  return riscv_expand_builtin_insn (icode, opno, ops, false);
 }
 
 /* Implement TARGET_GIMPLE_FOLD_BUILTIN.  */
@@ -410,7 +474,10 @@ riscv_expand_builtin (tree exp, rtx target, rtx subtarget ATTRIBUTE_UNUSED,
 
 	  case RISCV_BUILTIN_DIRECT_NO_TARGET:
 	    return riscv_expand_builtin_direct (d->icode, target, exp, false);
-	  }
+
+    case RISCV_BUILTIN_ZACAS:
+	    return riscv_expand_builtin_zacas (d->icode, target, exp);
+    }
       }
     }
 

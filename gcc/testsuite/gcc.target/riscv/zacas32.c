@@ -1,11 +1,13 @@
 /* { dg-do compile } */
 /* { dg-options "-march=rv32g_zacas -mabi=ilp32" } */
 
-void foo1(int rd, int rs2, void *rs1) {
+void foo1(int rd, int rs2, void *rs1)
+{
     __builtin_riscv_amocas32(rd, rs2, rs1);
 }
 
-void foo2(long rd, long rs2, void *rs1) {
+void foo2(long rd, long rs2, void *rs1)
+{
     __builtin_riscv_amocas64(rd, rs2, rs1);
 }
 
