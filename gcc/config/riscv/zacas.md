@@ -4,10 +4,10 @@
 ])
 
 (define_insn "riscv_amocas_<SIDITI:mode>_<X:mode>"
-  [(set (match_operand:SIDITI 0 "register_operand" "+r")
-        (unspec_volatile [(match_operand:SIDITI 1 "register_operand" "r")
-                            (match_operand:X 2 "memory_operand" "+A")]
-                            UNSPEC_AMOCAS32))]
+  [(unspec_volatile [(match_operand:SIDITI 0 "register_operand" "+r")
+                    (match_operand:SIDITI 1 "register_operand" "r")
+                    (match_operand:X 2 "memory_operand" "+A")]
+                    UNSPEC_AMOCAS)]
   "TARGET_ZACAS"
   "amocas.<SIDITI:amocas>\t%0,%1,%2"
   [(set_attr "type" "zacas")])
