@@ -108,11 +108,9 @@ AVAIL (flush32, TARGET_ZICBOM && !TARGET_64BIT)
 AVAIL (flush64, TARGET_ZICBOM && TARGET_64BIT)
 AVAIL (inval32, TARGET_ZICBOM && !TARGET_64BIT)
 AVAIL (inval64, TARGET_ZICBOM && TARGET_64BIT)
-AVAIL (zacas_amocassi32, TARGET_ZACAS && !TARGET_64BIT)
-AVAIL (zacas_amocassi64, TARGET_ZACAS && TARGET_64BIT)
-AVAIL (zacas_amocasdi32, TARGET_ZACAS && !TARGET_64BIT)
-AVAIL (zacas_amocasdi64, TARGET_ZACAS && TARGET_64BIT)
-AVAIL (zacas_amocasti128, TARGET_ZACAS && TARGET_64BIT)
+AVAIL (zacas_amocas32, TARGET_ZACAS && !TARGET_64BIT)
+AVAIL (zacas_amocas64, TARGET_ZACAS && TARGET_64BIT)
+AVAIL (zacas_amocas128, TARGET_ZACAS && TARGET_64BIT)
 AVAIL (zero32,  TARGET_ZICBOZ && !TARGET_64BIT)
 AVAIL (zero64,  TARGET_ZICBOZ && TARGET_64BIT)
 AVAIL (prefetchi32, TARGET_ZICBOP && !TARGET_64BIT)
@@ -412,7 +410,6 @@ riscv_expand_builtin_zacas (enum insn_code icode, rtx target, tree exp)
       tree arg = CALL_EXPR_ARG (exp, argno);
       machine_mode mode = TYPE_MODE (TREE_TYPE (arg));
       rtx mem = get_builtin_sync_mem (arg, mode);
-      // rtx mem = expand_normal (arg)
       create_fixed_operand (op, mem);
     } else {
       riscv_prepare_builtin_arg (&ops[opno++], exp, argno);

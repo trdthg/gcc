@@ -51,6 +51,9 @@
 (define_mode_iterator SHORT [QI HI])
 
 ;; Iterator for SImode and DImode constant generation.
+(define_mode_iterator SIDI [SI DI])
+
+;; Iterator for SImode, DImode and TImode constant generation.
 (define_mode_iterator SIDITI [SI DI TI])
 
 ;; Iterator for HImode constant generation.
