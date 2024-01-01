@@ -53,6 +53,8 @@ along with GCC; see the file COPYING3.  If not see
 #define RISCV_FTYPE_NAME3(A, B, C, D) RISCV_##A##_FTYPE_##B##_##C##_##D
 #define RISCV_FTYPE_NAME4(A, B, C, D, E) \
   RISCV_##A##_FTYPE_##B##_##C##_##D##_##E
+#define RISCV_FTYPE_NAME5(A, B, C, D, E, F) \
+  RISCV_##A##_FTYPE_##B##_##C##_##D##_##E##_##F
 
 /* Classifies the prototype of a built-in function.  */
 enum riscv_function_type {
@@ -196,6 +198,9 @@ AVAIL (cvelw, TARGET_XCVELW && !TARGET_64BIT)
 #define RISCV_FTYPE_ATYPES4(A, B, C, D, E) \
   RISCV_ATYPE_##A, RISCV_ATYPE_##B, RISCV_ATYPE_##C, RISCV_ATYPE_##D, \
   RISCV_ATYPE_##E
+#define RISCV_FTYPE_ATYPES5(A, B, C, D, E, F) \
+  RISCV_ATYPE_##A, RISCV_ATYPE_##B, RISCV_ATYPE_##C, RISCV_ATYPE_##D, \
+  RISCV_ATYPE_##E, RISCV_ATYPE_##F
 
 static const struct riscv_builtin_description riscv_builtins[] = {
   #include "riscv-cmo.def"
@@ -329,10 +334,6 @@ get_builtin_sync_mem (tree loc, machine_mode mode)
 
   addr = expand_expr (loc, NULL_RTX, addr_mode, EXPAND_SUM);
   addr = convert_memory_address (addr_mode, addr);
-
-  /* Note that we explicitly do not want any alias information for this
-     memory, so that we kill all other live memories.  Otherwise we don't
-     satisfy the full barrier semantics of the intrinsic.  */
   mem = gen_rtx_MEM (mode, addr);
 
   set_mem_addr_space (mem, addr_space);
@@ -396,23 +397,26 @@ riscv_expand_builtin_direct (enum insn_code icode, rtx target, tree exp,
 static rtx
 riscv_expand_builtin_zacas (enum insn_code icode, rtx target, tree exp)
 {
-  struct expand_operand ops[3];
+  struct expand_operand ops[5];
 
-  /* Map any target to operand 0.  */
   int opno = 0;
-  /* Map the arguments to the other operands.  */
-  gcc_assert (opno + call_expr_nargs (exp)
+  gcc_assert (call_expr_nargs (exp)
 	      == insn_data[icode].n_generator_args);
   for (int argno = 0; argno < call_expr_nargs (exp); argno++) {
-    if (argno == 2) {
-      expand_operand *op = &ops[opno++];
-
-      tree arg = CALL_EXPR_ARG (exp, argno);
-      machine_mode mode = TYPE_MODE (TREE_TYPE (arg));
-      rtx mem = get_builtin_sync_mem (arg, mode);
-      create_fixed_operand (op, mem);
-    } else {
-      riscv_prepare_builtin_arg (&ops[opno++], exp, argno);
+    expand_operand *op = &ops[opno++];
+    tree arg = CALL_EXPR_ARG (exp, argno);
+    machine_mode mode = TYPE_MODE (TREE_TYPE (arg));
+    switch (argno) {
+    case 2:
+      create_fixed_operand (op, get_builtin_sync_mem (arg, mode));
+      break;
+    case 3:
+    case 4:
+      create_integer_operand (op, memmodel_from_int (INTVAL (expand_normal (arg))));
+      break;
+    default:
+      create_input_operand (op, expand_normal (arg), mode);
+      break;
     }
   }
 
