@@ -17,13 +17,13 @@
     enum memmodel model = riscv_union_memmodels (model_success, model_failure);
 
     if (model == MEMMODEL_SEQ_CST || model == MEMMODEL_ACQ_REL)
-      return "amocas.<SIDI:amocas>.aqrl\t%0,%1,%2";
+      return "amocas.<SIDI:amocas>.aqrl\t%1,%2,%0";
     else if (model == MEMMODEL_ACQUIRE)
-      return "amocas.<SIDI:amocas>.aq\t%0,%1,%2";
+      return "amocas.<SIDI:amocas>.aq\t%1,%2,%0";
     else if (model == MEMMODEL_RELEASE)
-      return "amocas.<SIDI:amocas>.rl\t%0,%1,%2";
+      return "amocas.<SIDI:amocas>.rl\t%1,%2,%0";
     else
-      return "amocas.<SIDI:amocas>\t%0,%1,%2";
+      return "amocas.<SIDI:amocas>\t%1,%2,%0";
   }
   [(set_attr "type" "zacas")])
 
@@ -41,12 +41,12 @@
     enum memmodel model = riscv_union_memmodels (model_success, model_failure);
 
     if (model == MEMMODEL_SEQ_CST || model == MEMMODEL_ACQ_REL)
-      return "amocas.<SIDITI:amocas>.aqrl\t%0,%1,%2";
+      return "amocas.<SIDITI:amocas>.aqrl\t%1,%2,%0";
     else if (model == MEMMODEL_ACQUIRE)
-      return "amocas.<SIDITI:amocas>.aq\t%0,%1,%2";
+      return "amocas.<SIDITI:amocas>.aq\t%1,%2,%0";
     else if (model == MEMMODEL_RELEASE)
-      return "amocas.<SIDITI:amocas>.rl\t%0,%1,%2";
+      return "amocas.<SIDITI:amocas>.rl\t%1,%2,%0";
     else
-      return "amocas.<SIDITI:amocas>\t%0,%1,%2";
+      return "amocas.<SIDITI:amocas>\t%1,%2,%0";
   }
   [(set_attr "type" "zacas")])
