@@ -4,9 +4,9 @@
 ])
 
 (define_insn "riscv_amocas32<SIDI:mode>"
-  [(unspec_volatile [(match_operand:SIDI 0 "register_operand" "+r") ;; expected value
-                    (match_operand:SIDI 1 "register_operand" "r")   ;; desired value
-                    (match_operand:SI 2 "memory_operand" "+A")      ;; memory
+  [(unspec_volatile [(match_operand:SI 0 "memory_operand" "+A")     ;; memory
+                    (match_operand:SIDI 1 "register_operand" "r")  ;; expected value
+                    (match_operand:SIDI 2 "register_operand" "r")   ;; desired value
                     (match_operand:SI 3 "const_int_operand")        ;; mod_s
                     (match_operand:SI 4 "const_int_operand")]       ;; mod_f
                     UNSPEC_AMOCAS)]
@@ -28,9 +28,9 @@
   [(set_attr "type" "zacas")])
 
 (define_insn "riscv_amocas64<SIDITI:mode>"
-  [(unspec_volatile [(match_operand:SIDITI 0 "register_operand" "+r") ;; expected value
-                    (match_operand:SIDITI 1 "register_operand" "r")   ;; desired value
-                    (match_operand:DI 2 "memory_operand" "+A")        ;; memory
+  [(unspec_volatile [(match_operand:DI 0 "memory_operand" "+A")       ;; memory
+                    (match_operand:SIDITI 1 "register_operand" "r")  ;; expected value
+                    (match_operand:SIDITI 2 "register_operand" "r")   ;; desired value
                     (match_operand:SI 3 "const_int_operand")          ;; mod_s
                     (match_operand:SI 4 "const_int_operand")]         ;; mod_f
                     UNSPEC_AMOCAS)]

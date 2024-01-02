@@ -407,7 +407,7 @@ riscv_expand_builtin_zacas (enum insn_code icode, rtx target, tree exp)
     tree arg = CALL_EXPR_ARG (exp, argno);
     machine_mode mode = TYPE_MODE (TREE_TYPE (arg));
     switch (argno) {
-    case 2:
+    case 0:
       create_fixed_operand (op, get_builtin_sync_mem (arg, mode));
       break;
     case 3:
