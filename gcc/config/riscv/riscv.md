@@ -326,6 +326,7 @@
 ;; clmul    clmul, clmulh, clmulr
 ;; rotate   rotation instructions
 ;; atomic   atomic instructions
+;; zacas   zacas instructions
 ;; condmove	conditional moves
 ;; crypto cryptography instructions
 ;; mvpair    zc move pair instructions
@@ -467,7 +468,7 @@
    mtc,mfc,const,arith,logical,shift,slt,imul,idiv,move,fmove,fadd,fmul,
    fmadd,fdiv,fcmp,fcvt,fcvt_i2f,fcvt_f2i,fsqrt,multi,auipc,sfb_alu,nop,trap,
    ghost,bitmanip,rotate,clmul,min,max,minu,maxu,clz,ctz,cpop,
-   atomic,condmove,crypto,mvpair,zicond,rdvlenb,rdvl,wrvxrm,wrfrm,
+   atomic,zacas,condmove,crypto,mvpair,zicond,rdvlenb,rdvl,wrvxrm,wrfrm,
    rdfrm,vsetvl,vsetvl_pre,vlde,vste,vldm,vstm,vlds,vsts,
    vldux,vldox,vstux,vstox,vldff,vldr,vstr,
    vlsegde,vssegte,vlsegds,vssegts,vlsegdux,vlsegdox,vssegtux,vssegtox,vlsegdff,
@@ -4343,6 +4344,7 @@
 (include "generic-ooo.md")
 (include "vector.md")
 (include "vector-crypto.md")
+(include "zacas.md")
 (include "zicond.md")
 (include "sfb.md")
 (include "zc.md")

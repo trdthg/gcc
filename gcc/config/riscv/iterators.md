@@ -56,6 +56,12 @@
 ;; Iterator for HImode constant generation.
 (define_mode_iterator HISI [HI SI])
 
+;; Iterator for SImode and DImode constant generation.
+(define_mode_iterator SIDI [SI DI])
+
+;; Iterator for SImode, DImode and TImode constant generation.
+(define_mode_iterator SIDITI [SI DI TI])
+
 ;; Iterator for QImode extension patterns.
 (define_mode_iterator SUPERQI [HI SI (DI "TARGET_64BIT")])
 
@@ -121,6 +127,9 @@
 
 ;; This attribute gives the format suffix for atomic memory operations.
 (define_mode_attr amo [(SI "w") (DI "d")])
+
+;; This attribute gives the format suffix for amocas memory operations.
+(define_mode_attr amocas [(SI "w") (DI "d") (TI "q")])
 
 ;; This attribute gives the format suffix for byte and halfword atomic memory operations.
 (define_mode_attr amobh [(QI "b") (HI "h")])

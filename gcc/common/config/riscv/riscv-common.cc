@@ -83,6 +83,7 @@ static const riscv_implied_info_t riscv_implied_info[] =
   {"a", "zalrsc"},
 
   {"zabha", "zaamo"},
+  {"zacas", "a"},
 
   {"zdinx", "zfinx"},
   {"zfinx", "zicsr"},
@@ -263,6 +264,8 @@ static const struct riscv_ext_version riscv_ext_version_table[] =
   {"zaamo", ISA_SPEC_CLASS_NONE, 1, 0},
   {"zalrsc", ISA_SPEC_CLASS_NONE, 1, 0},
   {"zabha", ISA_SPEC_CLASS_NONE, 1, 0},
+
+  {"zacas", ISA_SPEC_CLASS_NONE, 1, 0},
 
   {"zba", ISA_SPEC_CLASS_NONE, 1, 0},
   {"zbb", ISA_SPEC_CLASS_NONE, 1, 0},
@@ -1648,6 +1651,7 @@ static const riscv_ext_flag_table_t riscv_ext_flag_table[] =
   {"za128rs", &gcc_options::x_riscv_za_subext, MASK_ZA128RS},
   {"zawrs",   &gcc_options::x_riscv_za_subext, MASK_ZAWRS},
   {"zaamo",   &gcc_options::x_riscv_za_subext, MASK_ZAAMO},
+  {"zacas",   &gcc_options::x_riscv_za_subext, MASK_ZACAS},
   {"zalrsc",  &gcc_options::x_riscv_za_subext, MASK_ZALRSC},
   {"zabha",   &gcc_options::x_riscv_za_subext, MASK_ZABHA},
 
