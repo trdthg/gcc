@@ -411,6 +411,7 @@ riscv_expand_builtin_zacas (enum insn_code icode, tree exp)
     {
     case 0:
       create_fixed_operand (op, get_builtin_sync_mem (arg, mode));
+      // create_input_operand (op, expand_normal (arg), mode);
       break;
     case 3:
     case 4:

@@ -1,0 +1,9 @@
+{
+    "files.associations": {
+        "cstdarg": "cpp",
+        "stdarg.h": "c",
+        "requires_hosted.h": "c",
+        "c++config": "cpp",
+        "*.def": "cpp"
+    }
+}

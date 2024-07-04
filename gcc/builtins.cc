@@ -6633,7 +6633,7 @@ get_memmodel (tree exp)
   return (enum memmodel) val;
 }
 
-/* Expand the __atomic_exchange intrinsic:
+/* Expand the c intrinsic:
    	TYPE __atomic_exchange (TYPE *object, TYPE desired, enum memmodel)
    EXP is the CALL_EXPR.
    TARGET is an optional place for us to store the results.  */
