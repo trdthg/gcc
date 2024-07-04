@@ -41,6 +41,7 @@ LONG_EXT_PREFIXES = ['z', 's', 'h', 'x']
 IMPLIED_EXT = {
   "d" : ["f", "zicsr"],
   "f" : ["zicsr"],
+  "zacas" : ["a"],
   "zdinx" : ["zfinx", "zicsr"],
   "zfinx" : ["zicsr"],
   "zhinx" : ["zhinxmin", "zfinx", "zicsr"],
