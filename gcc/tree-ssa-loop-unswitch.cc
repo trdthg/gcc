@@ -1,5 +1,5 @@
 /* Loop unswitching.
-   Copyright (C) 2004-2023 Free Software Foundation, Inc.
+   Copyright (C) 2004-2024 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -763,8 +763,8 @@ evaluate_control_stmt_using_entry_checks (gimple *stmt,
 	    continue;
 
 	  int_range_max r;
-	  if (!ranger->gori ().outgoing_edge_range_p (r, e, idx,
-						      *get_global_range_query ()))
+	  if (!ranger->gori ().edge_range_p (r, e, idx,
+					     *get_global_range_query ()))
 	    continue;
 	  r.intersect (path_range);
 	  if (r.undefined_p ())

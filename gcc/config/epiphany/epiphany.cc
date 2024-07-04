@@ -1,5 +1,5 @@
 /* Subroutines used for code generation on the EPIPHANY cpu.
-   Copyright (C) 1994-2023 Free Software Foundation, Inc.
+   Copyright (C) 1994-2024 Free Software Foundation, Inc.
    Contributed by Embecosm on behalf of Adapteva, Inc.
 
 This file is part of GCC.
@@ -728,7 +728,8 @@ epiphany_setup_incoming_varargs (cumulative_args_t cum,
     gcc_assert (arg.mode != BLKmode);
 
   next_cum = *get_cumulative_args (cum);
-  if (!TYPE_NO_NAMED_ARGS_STDARG_P (TREE_TYPE (current_function_decl)))
+  if (!TYPE_NO_NAMED_ARGS_STDARG_P (TREE_TYPE (current_function_decl))
+      || arg.type != NULL_TREE)
     next_cum = (ROUND_ADVANCE_CUM (next_cum, arg.mode, arg.type)
 		+ ROUND_ADVANCE_ARG (arg.mode, arg.type));
   first_anon_arg = next_cum;

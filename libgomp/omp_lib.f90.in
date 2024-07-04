@@ -1,4 +1,4 @@
-!  Copyright (C) 2005-2023 Free Software Foundation, Inc.
+!  Copyright (C) 2005-2024 Free Software Foundation, Inc.
 !  Contributed by Jakub Jelinek <jakub@redhat.com>.
 
 !  This file is part of the GNU Offloading and Multi Processing Library
@@ -158,6 +158,8 @@
                  parameter :: omp_pteam_mem_alloc = 7
         integer (kind=omp_allocator_handle_kind), &
                  parameter :: omp_thread_mem_alloc = 8
+        integer (kind=omp_allocator_handle_kind), &
+                 parameter :: ompx_gnu_pinned_mem_alloc = 200
         integer (omp_memspace_handle_kind), &
                  parameter :: omp_default_mem_space = 0
         integer (omp_memspace_handle_kind), &

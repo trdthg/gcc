@@ -1,5 +1,5 @@
 /* Subroutines used for parsing target attribute for RISC-V.
-   Copyright (C) 2023 Free Software Foundation, Inc.
+   Copyright (C) 2023-2024 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -54,6 +54,10 @@ public:
     m_loc = loc;
   }
 
+  riscv_subset_list* get_riscv_subset_list () {
+    return m_subset_list;
+  }
+
   void update_settings (struct gcc_options *opts) const;
 private:
   const char *m_raw_attr_str;
@@ -105,11 +109,11 @@ riscv_target_attr_parser::parse_arch (const char *str)
     {
       /* Parsing the extension list like "+<ext>[,+<ext>]*".  */
       size_t len = strlen (str);
-      std::unique_ptr<char[]> buf (new char[len]);
+      std::unique_ptr<char[]> buf (new char[len+1]);
       char *str_to_check = buf.get ();
       strcpy (str_to_check, str);
       const char *token = strtok_r (str_to_check, ",", &str_to_check);
-      m_subset_list = riscv_current_subset_list ()->clone ();
+      m_subset_list = riscv_cmdline_subset_list ()->clone ();
       m_subset_list->set_loc (m_loc);
       while (token)
 	{
@@ -136,6 +140,8 @@ riscv_target_attr_parser::parse_arch (const char *str)
 	    }
 	  token = strtok_r (NULL, ",", &str_to_check);
 	}
+
+      m_subset_list->finalize ();
       return true;
     }
 fail:
@@ -241,7 +247,7 @@ riscv_process_one_target_attr (char *arg_str,
       return false;
     }
 
-  std::unique_ptr<char[]> buf (new char[len]);
+  std::unique_ptr<char[]> buf (new char[len+1]);
   char *str_to_check = buf.get();
   strcpy (str_to_check, arg_str);
 
@@ -295,7 +301,8 @@ num_occurences_in_str (char c, char *str)
    and update the global target options space.  */
 
 static bool
-riscv_process_target_attr (tree args, location_t loc, struct gcc_options *opts)
+riscv_process_target_attr (tree fndecl, tree args, location_t loc,
+			   struct gcc_options *opts)
 {
   if (TREE_CODE (args) == TREE_LIST)
     {
@@ -304,7 +311,7 @@ riscv_process_target_attr (tree args, location_t loc, struct gcc_options *opts)
 	  tree head = TREE_VALUE (args);
 	  if (head)
 	    {
-	      if (!riscv_process_target_attr (head, loc, opts))
+	      if (!riscv_process_target_attr (fndecl, head, loc, opts))
 		return false;
 	    }
 	  args = TREE_CHAIN (args);
@@ -327,7 +334,7 @@ riscv_process_target_attr (tree args, location_t loc, struct gcc_options *opts)
       return false;
     }
 
-  std::unique_ptr<char[]> buf (new char[len]);
+  std::unique_ptr<char[]> buf (new char[len+1]);
   char *str_to_check = buf.get ();
   strcpy (str_to_check, TREE_STRING_POINTER (args));
 
@@ -357,6 +364,11 @@ riscv_process_target_attr (tree args, location_t loc, struct gcc_options *opts)
   /* Apply settings from target attribute.  */
   attr_parser.update_settings (opts);
 
+  /* Add the string of the target attribute to the fndecl hash table.  */
+  riscv_subset_list *subset_list = attr_parser.get_riscv_subset_list ();
+  if (subset_list)
+    riscv_func_target_put (fndecl, subset_list->to_string (true));
+
   return true;
 }
 
@@ -374,7 +386,7 @@ riscv_option_valid_attribute_p (tree fndecl, tree, tree args, int)
   /* Save the current target options to restore at the end.  */
   cl_target_option_save (&cur_target, &global_options, &global_options_set);
 
-  ret = riscv_process_target_attr (args, loc, &global_options);
+  ret = riscv_process_target_attr (fndecl, args, loc, &global_options);
 
   if (ret)
     {

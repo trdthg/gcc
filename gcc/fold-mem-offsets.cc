@@ -1,5 +1,5 @@
 /* Late RTL pass to fold memory offsets.
-   Copyright (C) 2023 Free Software Foundation, Inc.
+   Copyright (C) 2023-2024 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -491,7 +491,7 @@ fold_offsets (rtx_insn *insn, rtx reg, bool analyze, bitmap foldable_insns)
 {
   rtx_insn *def = get_single_def_in_bb (insn, reg);
 
-  if (!def || GET_CODE (PATTERN (def)) != SET)
+  if (!def || RTX_FRAME_RELATED_P (def) || GET_CODE (PATTERN (def)) != SET)
     return 0;
 
   rtx dest = SET_DEST (PATTERN (def));

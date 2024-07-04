@@ -1,5 +1,5 @@
 /* Pass manager for Fortran front end.
-   Copyright (C) 2010-2023 Free Software Foundation, Inc.
+   Copyright (C) 2010-2024 Free Software Foundation, Inc.
    Contributed by Thomas König.
 
 This file is part of GCC.
@@ -5805,6 +5805,9 @@ check_externals_expr (gfc_expr **ep, int *walk_subtrees ATTRIBUTE_UNUSED,
   gfc_actual_arglist *actual;
 
   if (e->expr_type != EXPR_FUNCTION)
+    return 0;
+
+  if (e->symtree && e->symtree->n.sym->attr.subroutine)
     return 0;
 
   sym = e->value.function.esym;

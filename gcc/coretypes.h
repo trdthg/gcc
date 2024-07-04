@@ -1,5 +1,5 @@
 /* GCC core type declarations.
-   Copyright (C) 2002-2023 Free Software Foundation, Inc.
+   Copyright (C) 2002-2024 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -100,6 +100,7 @@ struct gimple;
 typedef gimple *gimple_seq;
 struct gimple_stmt_iterator;
 class code_helper;
+enum tree_index : unsigned;
 
 /* Forward declare rtx_code, so that we can use it in target hooks without
    needing to pull in rtl.h.  */

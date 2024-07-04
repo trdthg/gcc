@@ -1,5 +1,5 @@
 ;; Machine description for AArch64 SVE2.
-;; Copyright (C) 2019-2023 Free Software Foundation, Inc.
+;; Copyright (C) 2019-2024 Free Software Foundation, Inc.
 ;; Contributed by ARM Ltd.
 ;;
 ;; This file is part of GCC.
@@ -615,29 +615,29 @@
 ;; -------------------------------------------------------------------------
 
 (define_insn "@aarch64_mul_lane_<mode>"
-  [(set (match_operand:SVE_FULL_HSDI 0 "register_operand" "=w")
-	(mult:SVE_FULL_HSDI
-	  (unspec:SVE_FULL_HSDI
-	    [(match_operand:SVE_FULL_HSDI 2 "register_operand" "<sve_lane_con>")
+  [(set (match_operand:SVE_FULL_HSDI_SIMD_DI 0 "register_operand" "=w")
+	(mult:SVE_FULL_HSDI_SIMD_DI
+	  (unspec:SVE_FULL_HSDI_SIMD_DI
+	    [(match_operand:SVE_FULL_HSDI_SIMD_DI 2 "register_operand" "<sve_lane_con>")
 	     (match_operand:SI 3 "const_int_operand")]
 	    UNSPEC_SVE_LANE_SELECT)
-	  (match_operand:SVE_FULL_HSDI 1 "register_operand" "w")))]
+	  (match_operand:SVE_FULL_HSDI_SIMD_DI 1 "register_operand" "w")))]
   "TARGET_SVE2"
-  "mul\t%0.<Vetype>, %1.<Vetype>, %2.<Vetype>[%3]"
+  "mul\t%Z0.<Vetype>, %Z1.<Vetype>, %Z2.<Vetype>[%3]"
 )
 
 ;; The 2nd and 3rd alternatives are valid for just TARGET_SVE as well but
 ;; we include them here to allow matching simpler, unpredicated RTL.
 (define_insn "*aarch64_mul_unpredicated_<mode>"
-  [(set (match_operand:SVE_I 0 "register_operand")
-	(mult:SVE_I
-	  (match_operand:SVE_I 1 "register_operand")
-	  (match_operand:SVE_I 2 "aarch64_sve_vsm_operand")))]
+  [(set (match_operand:SVE_I_SIMD_DI 0 "register_operand")
+	(mult:SVE_I_SIMD_DI
+	  (match_operand:SVE_I_SIMD_DI 1 "register_operand")
+	  (match_operand:SVE_I_SIMD_DI 2 "aarch64_sve_vsm_operand")))]
   "TARGET_SVE2"
   {@ [ cons: =0 , 1 , 2   ; attrs: movprfx ]
-     [ w        , w , w   ; *              ] mul\t%0.<Vetype>, %1.<Vetype>, %2.<Vetype>
-     [ w        , 0 , vsm ; *              ] mul\t%0.<Vetype>, %0.<Vetype>, #%2
-     [ ?&w      , w , vsm ; yes            ] movprfx\t%0, %1\;mul\t%0.<Vetype>, %0.<Vetype>, #%2
+     [ w        , w , w   ; *              ] mul\t%Z0.<Vetype>, %Z1.<Vetype>, %Z2.<Vetype>
+     [ w        , 0 , vsm ; *              ] mul\t%Z0.<Vetype>, %Z0.<Vetype>, #%2
+     [ ?&w      , w , vsm ; yes            ] movprfx\t%Z0, %Z1\;mul\t%Z0.<Vetype>, %Z0.<Vetype>, #%2
   }
 )
 
@@ -3338,18 +3338,22 @@
 
 ;; Predicated string matching.
 (define_insn "@aarch64_pred_<sve_int_op><mode>"
-  [(set (match_operand:<VPRED> 0 "register_operand" "=Upa")
+  [(set (match_operand:<VPRED> 0 "register_operand")
 	(unspec:<VPRED>
-	  [(match_operand:<VPRED> 1 "register_operand" "Upl")
+	  [(match_operand:<VPRED> 1 "register_operand")
 	   (match_operand:SI 2 "aarch64_sve_ptrue_flag")
 	   (unspec:<VPRED>
-	     [(match_operand:SVE_FULL_BHI 3 "register_operand" "w")
-	      (match_operand:SVE_FULL_BHI 4 "register_operand" "w")]
+	     [(match_operand:SVE_FULL_BHI 3 "register_operand")
+	      (match_operand:SVE_FULL_BHI 4 "register_operand")]
 	     SVE2_MATCH)]
 	  UNSPEC_PRED_Z))
    (clobber (reg:CC_NZC CC_REGNUM))]
   "TARGET_SVE2 && TARGET_NON_STREAMING"
-  "<sve_int_op>\t%0.<Vetype>, %1/z, %3.<Vetype>, %4.<Vetype>"
+  {@ [ cons: =0, 1  , 3, 4; attrs: pred_clobber ]
+     [ &Upa    , Upl, w, w; yes                 ] <sve_int_op>\t%0.<Vetype>, %1/z, %3.<Vetype>, %4.<Vetype>
+     [ ?Upl    , 0  , w, w; yes                 ] ^
+     [ Upa     , Upl, w, w; no                  ] ^
+  }
 )
 
 ;; Predicated string matching in which both the flag and predicate results

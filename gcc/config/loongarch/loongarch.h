@@ -1,5 +1,5 @@
 /* Definitions of target machine for GNU compiler.  LoongArch version.
-   Copyright (C) 2021-2023 Free Software Foundation, Inc.
+   Copyright (C) 2021-2024 Free Software Foundation, Inc.
    Contributed by Loongson Ltd.
    Based on MIPS and RISC-V target for GNU compiler.
 
@@ -22,6 +22,9 @@ along with GCC; see the file COPYING3.  If not see
 /* LoongArch external variables defined in loongarch.cc.  */
 
 #include "config/loongarch/loongarch-opts.h"
+#include "config/loongarch/loongarch-evolution.h"
+
+#define SWITCHABLE_TARGET 1
 
 #define TARGET_SUPPORTS_WIDE_INT 1
 
@@ -138,20 +141,17 @@ along with GCC; see the file COPYING3.  If not see
 /* Width of a LASX vector register in bits.  */
 #define BITS_PER_LASX_REG (UNITS_PER_LASX_REG * BITS_PER_UNIT)
 
-/* For LARCH, width of a floating point register.  */
-#define UNITS_PER_FPREG (TARGET_DOUBLE_FLOAT ? 8 : 4)
-
 /* The largest size of value that can be held in floating-point
    registers and moved with a single instruction.  */
 #define UNITS_PER_HWFPVALUE \
-  (TARGET_SOFT_FLOAT ? 0 : UNITS_PER_FPREG)
+  (TARGET_SOFT_FLOAT ? 0 : UNITS_PER_FP_REG)
 
 /* The largest size of value that can be held in floating-point
    registers.  */
 #define UNITS_PER_FPVALUE \
   (TARGET_SOFT_FLOAT ? 0 \
-   : TARGET_SINGLE_FLOAT ? UNITS_PER_FPREG \
-			 : LONG_DOUBLE_TYPE_SIZE / BITS_PER_UNIT)
+   : TARGET_SINGLE_FLOAT ? UNITS_PER_FP_REG \
+			 : LA_LONG_DOUBLE_TYPE_SIZE / BITS_PER_UNIT)
 
 /* The number of bytes in a double.  */
 #define UNITS_PER_DOUBLE (TYPE_PRECISION (double_type_node) / BITS_PER_UNIT)
@@ -162,9 +162,8 @@ along with GCC; see the file COPYING3.  If not see
 #define LONG_TYPE_SIZE (TARGET_64BIT ? 64 : 32)
 #define LONG_LONG_TYPE_SIZE 64
 
-#define FLOAT_TYPE_SIZE 32
-#define DOUBLE_TYPE_SIZE 64
-#define LONG_DOUBLE_TYPE_SIZE (TARGET_64BIT ? 128 : 64)
+/* LONG_DOUBLE_TYPE_SIZE get poisoned, so add LA_ prefix.  */
+#define LA_LONG_DOUBLE_TYPE_SIZE (TARGET_64BIT ? 128 : 64)
 
 /* Define the sizes of fixed-point types.  */
 #define SHORT_FRACT_TYPE_SIZE 8
@@ -179,7 +178,7 @@ along with GCC; see the file COPYING3.  If not see
 
 /* long double is not a fixed mode, but the idea is that, if we
    support long double, we also want a 128-bit integer type.  */
-#define MAX_FIXED_MODE_SIZE LONG_DOUBLE_TYPE_SIZE
+#define MAX_FIXED_MODE_SIZE LA_LONG_DOUBLE_TYPE_SIZE
 
 /* Width in bits of a pointer.  */
 #ifndef POINTER_SIZE
@@ -200,11 +199,11 @@ along with GCC; see the file COPYING3.  If not see
 #define STRUCTURE_SIZE_BOUNDARY 8
 
 /* There is no point aligning anything to a rounder boundary than
-   LONG_DOUBLE_TYPE_SIZE, unless under LSX/LASX the bigggest alignment is
+   LA_LONG_DOUBLE_TYPE_SIZE, unless under LSX/LASX the bigggest alignment is
    BITS_PER_LSX_REG/BITS_PER_LASX_REG/..  */
 #define BIGGEST_ALIGNMENT \
   (ISA_HAS_LASX? BITS_PER_LASX_REG \
-   : (ISA_HAS_LSX ? BITS_PER_LSX_REG : LONG_DOUBLE_TYPE_SIZE))
+   : (ISA_HAS_LSX ? BITS_PER_LSX_REG : LA_LONG_DOUBLE_TYPE_SIZE))
 
 /* All accesses must be aligned.  */
 #define STRICT_ALIGNMENT (TARGET_STRICT_ALIGN)
@@ -713,12 +712,18 @@ enum reg_class
 			| RECIP_MASK_RSQRT | RECIP_MASK_VEC_SQRT \
 			| RECIP_MASK_VEC_DIV | RECIP_MASK_VEC_RSQRT)
 
-#define TARGET_RECIP_DIV        ((recip_mask & RECIP_MASK_DIV) != 0 || TARGET_uARCH_LA664)
-#define TARGET_RECIP_SQRT       ((recip_mask & RECIP_MASK_SQRT) != 0 || TARGET_uARCH_LA664)
-#define TARGET_RECIP_RSQRT      ((recip_mask & RECIP_MASK_RSQRT) != 0 || TARGET_uARCH_LA664)
-#define TARGET_RECIP_VEC_DIV    ((recip_mask & RECIP_MASK_VEC_DIV) != 0 || TARGET_uARCH_LA664)
-#define TARGET_RECIP_VEC_SQRT   ((recip_mask & RECIP_MASK_VEC_SQRT) != 0 || TARGET_uARCH_LA664)
-#define TARGET_RECIP_VEC_RSQRT  ((recip_mask & RECIP_MASK_VEC_RSQRT) != 0 || TARGET_uARCH_LA664)
+#define TARGET_RECIP_DIV \
+  ((recip_mask & RECIP_MASK_DIV) != 0 && ISA_HAS_FRECIPE)
+#define TARGET_RECIP_SQRT \
+  ((recip_mask & RECIP_MASK_SQRT) != 0 && ISA_HAS_FRECIPE)
+#define TARGET_RECIP_RSQRT \
+  ((recip_mask & RECIP_MASK_RSQRT) != 0 && ISA_HAS_FRECIPE)
+#define TARGET_RECIP_VEC_DIV \
+  ((recip_mask & RECIP_MASK_VEC_DIV) != 0 && ISA_HAS_FRECIPE)
+#define TARGET_RECIP_VEC_SQRT \
+  ((recip_mask & RECIP_MASK_VEC_SQRT) != 0 && ISA_HAS_FRECIPE)
+#define TARGET_RECIP_VEC_RSQRT \
+  ((recip_mask & RECIP_MASK_VEC_RSQRT) != 0 && ISA_HAS_FRECIPE)
 
 /* 1 if N is a possible register number for function argument passing.
    We have no FP argument registers when soft-float.  */
@@ -868,7 +873,8 @@ typedef struct {
 /* A C expression for the cost of a branch instruction.  A value of
    1 is the default; other values are interpreted relative to that.  */
 
-#define BRANCH_COST(speed_p, predictable_p) loongarch_branch_cost
+#define BRANCH_COST(speed_p, predictable_p) la_branch_cost
+#define LOGICAL_OP_NON_SHORT_CIRCUIT 0
 
 /* Return the asm template for a conditional branch instruction.
    OPCODE is the opcode's mnemonic and OPERANDS is the asm template for
@@ -930,6 +936,7 @@ typedef struct {
   { "t8",	20 + GP_REG_FIRST },					\
   { "x",	21 + GP_REG_FIRST },					\
   { "fp",	22 + GP_REG_FIRST },					\
+  { "s9",	22 + GP_REG_FIRST },					\
   { "s0",	23 + GP_REG_FIRST },					\
   { "s1",	24 + GP_REG_FIRST },					\
   { "s2",	25 + GP_REG_FIRST },					\

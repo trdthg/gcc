@@ -1,7 +1,7 @@
 /* This file contains the definitions and documentation for the
    additional tree codes used in the GNU C++ compiler (see tree.def
    for the standard codes).
-   Copyright (C) 1987-2023 Free Software Foundation, Inc.
+   Copyright (C) 1987-2024 Free Software Foundation, Inc.
    Hacked by Michael Tiemann (tiemann@cygnus.com)
 
 This file is part of GCC.
@@ -567,7 +567,7 @@ DEFTREECODE (CO_YIELD_EXPR, "co_yield", tcc_expression, 2)
 /* The co_return expression is used to support coroutines.
 
    Op0 is the original expr, can be void (for use in diagnostics)
-   Op1 is the promise return_xxxx call for for the expression given. */
+   Op1 is the promise return_xxxx call for the expression given. */
 
 DEFTREECODE (CO_RETURN_EXPR, "co_return", tcc_statement, 2)
 

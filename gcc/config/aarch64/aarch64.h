@@ -1,5 +1,5 @@
 /* Machine description for AArch64 architecture.
-   Copyright (C) 2009-2023 Free Software Foundation, Inc.
+   Copyright (C) 2009-2024 Free Software Foundation, Inc.
    Contributed by ARM Ltd.
 
    This file is part of GCC.
@@ -95,12 +95,6 @@
 #define POINTER_SIZE		(TARGET_ILP32 ? 32 : 64)
 
 #define LONG_LONG_TYPE_SIZE	64
-
-#define FLOAT_TYPE_SIZE		32
-
-#define DOUBLE_TYPE_SIZE	64
-
-#define LONG_DOUBLE_TYPE_SIZE	128
 
 /* This value is the amount of bytes a caller is allowed to drop the stack
    before probing has to be done for stack clash protection.  */
@@ -242,7 +236,8 @@ constexpr auto AARCH64_FL_DEFAULT_ISA_MODE = AARCH64_FL_SM_OFF;
 #define AARCH64_ISA_SHA3	   (aarch64_isa_flags & AARCH64_FL_SHA3)
 #define AARCH64_ISA_F16FML	   (aarch64_isa_flags & AARCH64_FL_F16FML)
 #define AARCH64_ISA_RCPC	   (aarch64_isa_flags & AARCH64_FL_RCPC)
-#define AARCH64_ISA_RCPC8_4	   (aarch64_isa_flags & AARCH64_FL_V8_4A)
+#define AARCH64_ISA_RCPC8_4	   ((AARCH64_ISA_RCPC && AARCH64_ISA_V8_4A) \
+				    || (aarch64_isa_flags & AARCH64_FL_RCPC3))
 #define AARCH64_ISA_RNG		   (aarch64_isa_flags & AARCH64_FL_RNG)
 #define AARCH64_ISA_V8_5A	   (aarch64_isa_flags & AARCH64_FL_V8_5A)
 #define AARCH64_ISA_TME		   (aarch64_isa_flags & AARCH64_FL_TME)
@@ -296,6 +291,26 @@ constexpr auto AARCH64_FL_DEFAULT_ISA_MODE = AARCH64_FL_SM_OFF;
 #define AARCH64_FL_AMU		   AARCH64_FL_V8_4A
 #define AARCH64_FL_SCXTNUM	   AARCH64_FL_V8_5A
 #define AARCH64_FL_ID_PFR2	   AARCH64_FL_V8_5A
+
+/* Armv8.9-A extension feature bits defined in Binutils but absent from GCC,
+   aliased to their base architecture.  */
+#define AARCH64_FL_AIE		   AARCH64_FL_V8_9A
+#define AARCH64_FL_DEBUGv8p9	   AARCH64_FL_V8_9A
+#define AARCH64_FL_FGT2	   AARCH64_FL_V8_9A
+#define AARCH64_FL_ITE		   AARCH64_FL_V8_9A
+#define AARCH64_FL_PFAR	   AARCH64_FL_V8_9A
+#define AARCH64_FL_PMUv3_ICNTR	   AARCH64_FL_V8_9A
+#define AARCH64_FL_PMUv3_SS	   AARCH64_FL_V8_9A
+#define AARCH64_FL_PMUv3p9	   AARCH64_FL_V8_9A
+#define AARCH64_FL_RASv2	   AARCH64_FL_V8_9A
+#define AARCH64_FL_S1PIE	   AARCH64_FL_V8_9A
+#define AARCH64_FL_S1POE	   AARCH64_FL_V8_9A
+#define AARCH64_FL_S2PIE	   AARCH64_FL_V8_9A
+#define AARCH64_FL_S2POE	   AARCH64_FL_V8_9A
+#define AARCH64_FL_SCTLR2	   AARCH64_FL_V8_9A
+#define AARCH64_FL_SEBEP	   AARCH64_FL_V8_9A
+#define AARCH64_FL_SPE_FDS	   AARCH64_FL_V8_9A
+#define AARCH64_FL_TCR2	   AARCH64_FL_V8_9A
 
 /* SHA2 is an optional extension to AdvSIMD.  */
 #define TARGET_SHA2 (AARCH64_ISA_SHA2)
@@ -474,6 +489,11 @@ constexpr auto AARCH64_FL_DEFAULT_ISA_MODE = AARCH64_FL_SM_OFF;
     enabled through +gcs.  */
 #define TARGET_GCS (AARCH64_ISA_GCS)
 
+/* Prefer different predicate registers for the output of a predicated
+   operation over re-using an existing input predicate.  */
+#define TARGET_SVE_PRED_CLOBBER (TARGET_SVE \
+				 && (aarch64_tune_params.extra_tuning_flags \
+				     & AARCH64_EXTRA_TUNE_AVOID_PRED_RMW))
 
 /* Standard register usage.  */
 
@@ -516,11 +536,14 @@ constexpr auto AARCH64_FL_DEFAULT_ISA_MODE = AARCH64_FL_SM_OFF;
    register.  GCC internally uses the poly_int variable aarch64_sve_vg
    instead.  */
 
+#define FIXED_X18 0
+#define CALL_USED_X18 1
+
 #define FIXED_REGISTERS					\
   {							\
     0, 0, 0, 0,   0, 0, 0, 0,	/* R0 - R7 */		\
     0, 0, 0, 0,   0, 0, 0, 0,	/* R8 - R15 */		\
-    0, 0, 0, 0,   0, 0, 0, 0,	/* R16 - R23 */		\
+    0, 0, FIXED_X18, 0,   0, 0, 0, 0,	/* R16 - R23.  */	\
     0, 0, 0, 0,   0, 1, 0, 1,	/* R24 - R30, SP */	\
     0, 0, 0, 0,   0, 0, 0, 0,   /* V0 - V7 */           \
     0, 0, 0, 0,   0, 0, 0, 0,   /* V8 - V15 */		\
@@ -544,7 +567,7 @@ constexpr auto AARCH64_FL_DEFAULT_ISA_MODE = AARCH64_FL_SM_OFF;
   {							\
     1, 1, 1, 1,   1, 1, 1, 1,	/* R0 - R7 */		\
     1, 1, 1, 1,   1, 1, 1, 1,	/* R8 - R15 */		\
-    1, 1, 1, 0,   0, 0, 0, 0,	/* R16 - R23 */		\
+    1, 1, CALL_USED_X18, 0, 0,   0, 0, 0, /* R16 - R23.  */   \
     0, 0, 0, 0,   0, 1, 1, 1,	/* R24 - R30, SP */	\
     1, 1, 1, 1,   1, 1, 1, 1,	/* V0 - V7 */		\
     0, 0, 0, 0,   0, 0, 0, 0,	/* V8 - V15 */		\
@@ -1022,12 +1045,15 @@ struct GTY (()) aarch64_frame
   bool is_scs_enabled;
 };
 
+/* Private to winnt.cc.  */
+struct seh_frame_state;
+
 #ifdef hash_set_h
 typedef struct GTY (()) machine_function
 {
   struct aarch64_frame frame;
   /* One entry for each hard register.  */
-  bool reg_is_wrapped_separately[LAST_SAVED_REGNUM];
+  bool reg_is_wrapped_separately[LAST_SAVED_REGNUM + 1];
   /* One entry for each general purpose register.  */
   rtx call_via[SP_REGNUM];
 
@@ -1056,6 +1082,15 @@ typedef struct GTY (()) machine_function
   /* A set of all decls that have been passed to a vld1 intrinsic in the
      current function.  This is used to help guide the vector cost model.  */
   hash_set<tree> *vector_load_decls;
+
+  /* An instruction that was emitted at the start of the function to
+     set an Advanced SIMD pseudo register to zero.  If the instruction
+     still exists and still fulfils its original purpose. the same register
+     can be reused by other code.  */
+  rtx_insn *advsimd_zero_insn;
+
+  /* During SEH output, this is non-null.  */
+  struct seh_frame_state * GTY ((skip (""))) seh;
 } machine_function;
 #endif
 #endif

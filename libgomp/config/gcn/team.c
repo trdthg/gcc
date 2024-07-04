@@ -1,4 +1,4 @@
-/* Copyright (C) 2017-2023 Free Software Foundation, Inc.
+/* Copyright (C) 2017-2024 Free Software Foundation, Inc.
    Contributed by Mentor Embedded.
 
    This file is part of the GNU Offloading and Multi Processing Library
@@ -52,13 +52,14 @@ gomp_gcn_enter_kernel (void)
 {
   int threadid = __builtin_gcn_dim_pos (1);
 
-  /* Initialize indirect function support.  */
-  build_indirect_map ();
-
   if (threadid == 0)
     {
       int numthreads = __builtin_gcn_dim_size (1);
       int teamid = __builtin_gcn_dim_pos(0);
+
+      /* Initialize indirect function support.  */
+      if (teamid == 0)
+	build_indirect_map ();
 
       /* Set up the global state.
 	 Every team will do this, but that should be harmless.  */

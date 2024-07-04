@@ -1,5 +1,5 @@
 /* Subroutines used by or related to instruction recognition.
-   Copyright (C) 1987-2023 Free Software Foundation, Inc.
+   Copyright (C) 1987-2024 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -614,7 +614,11 @@ swap_change (int num)
   else
     std::swap (*changes[num].loc, changes[num].old);
   if (changes[num].object && !MEM_P (changes[num].object))
-    std::swap (INSN_CODE (changes[num].object), changes[num].old_code);
+    {
+      std::swap (INSN_CODE (changes[num].object), changes[num].old_code);
+      if (recog_data.insn == changes[num].object)
+	recog_data.insn = nullptr;
+    }
 }
 
 /* Temporarily undo all the changes numbered NUM and up, with a view

@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 B o d y                                  --
 --                                                                          --
---          Copyright (C) 1992-2023, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2024, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -882,7 +882,8 @@ package body Sem_Aux is
          return True;
 
       elsif Is_Record_Type (Btype) then
-         if Is_Limited_Record (Btype)
+         if Is_Controlled (Btype)
+           or else Is_Limited_Record (Btype)
            or else Is_Tagged_Type (Btype)
            or else Is_Volatile (Btype)
          then

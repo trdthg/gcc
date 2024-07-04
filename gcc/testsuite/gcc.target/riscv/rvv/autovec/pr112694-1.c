@@ -1,5 +1,5 @@
 /* { dg-do compile } */
-/* { dg-options "-march=rv32gc_zve64d_zvfh_zfh -mabi=ilp32d -mcmodel=medany -fdiagnostics-plain-output -ftree-vectorize -O2 --param riscv-autovec-lmul=m1 -std=c99 -fno-vect-cost-model --param=riscv-autovec-preference=fixed-vlmax -ffast-math" } */
+/* { dg-options "-march=rv32gc_zve64d_zvfh_zfh -mabi=ilp32d -mcmodel=medany -fdiagnostics-plain-output -ftree-vectorize -O2 -mrvv-max-lmul=m1 -std=c99 -fno-vect-cost-model -mrvv-vector-bits=zvl -ffast-math" } */
 
 #include <stdint-gcc.h>
 
@@ -16,8 +16,6 @@
 
 TEST_ALL()
 
-#include <assert.h>
-
 #define SZ 512
 
 #define RUN(TYPE, VAL)                                                         \
@@ -30,7 +28,7 @@ TEST_ALL()
     }                                                                          \
   vmul_##TYPE (a##TYPE, a##TYPE, b##TYPE, SZ);                                 \
   for (int i = 0; i < SZ; i++)                                                 \
-    assert (a##TYPE[i] == 2 * VAL);
+    if (a##TYPE[i] != 2 * VAL) __builtin_abort ();
 
 #define RUN_ALL()	\
  RUN(_Float16, 4)	\

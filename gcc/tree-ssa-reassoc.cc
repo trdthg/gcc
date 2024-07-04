@@ -1,5 +1,5 @@
 /* Reassociation for trees.
-   Copyright (C) 2005-2023 Free Software Foundation, Inc.
+   Copyright (C) 2005-2024 Free Software Foundation, Inc.
    Contributed by Daniel Berlin <dan@dberlin.org>
 
 This file is part of GCC.
@@ -646,6 +646,9 @@ static bool
 can_reassociate_op_p (tree op)
 {
   if (TREE_CODE (op) == SSA_NAME && SSA_NAME_OCCURS_IN_ABNORMAL_PHI (op))
+    return false;
+  /* Uninitialized variables can't participate in reassociation. */
+  if (TREE_CODE (op) == SSA_NAME && ssa_name_maybe_undef_p (op))
     return false;
   /* Make sure asm goto outputs do not participate in reassociation since
      we have no way to find an insertion place after asm goto.  */
@@ -2600,7 +2603,8 @@ init_range_entry (struct range_entry *r, tree exp, gimple *stmt)
 	}
 
       if (TREE_CODE (arg0) != SSA_NAME
-	  || SSA_NAME_OCCURS_IN_ABNORMAL_PHI (arg0))
+	  || SSA_NAME_OCCURS_IN_ABNORMAL_PHI (arg0)
+	  || ssa_name_maybe_undef_p (arg0))
 	break;
       loc = gimple_location (stmt);
       switch (code)
@@ -3373,7 +3377,7 @@ optimize_range_tests_to_bit_test (enum tree_code opcode, int first, int length,
 	 case, if we would need otherwise 2 or more comparisons, then use
 	 the bit test; in the other cases, the threshold is 3 comparisons.  */
       bool entry_test_needed;
-      value_range r;
+      int_range_max r;
       if (TREE_CODE (exp) == SSA_NAME
 	  && get_range_query (cfun)->range_of_expr (r, exp)
 	  && !r.undefined_p ()
@@ -3414,7 +3418,8 @@ optimize_range_tests_to_bit_test (enum tree_code opcode, int first, int length,
 	     We can avoid then subtraction of the minimum value, but the
 	     mask constant could be perhaps more expensive.  */
 	  if (compare_tree_int (lowi, 0) > 0
-	      && compare_tree_int (high, prec) < 0)
+	      && compare_tree_int (high, prec) < 0
+	      && (entry_test_needed || wi::ltu_p (r.upper_bound (), prec)))
 	    {
 	      int cost_diff;
 	      HOST_WIDE_INT m = tree_to_uhwi (lowi);
@@ -6409,10 +6414,17 @@ compare_repeat_factors (const void *x1, const void *x2)
   const repeat_factor *rf1 = (const repeat_factor *) x1;
   const repeat_factor *rf2 = (const repeat_factor *) x2;
 
-  if (rf1->count != rf2->count)
-    return rf1->count - rf2->count;
+  if (rf1->count < rf2->count)
+    return -1;
+  else if (rf1->count > rf2->count)
+    return 1;
 
-  return rf2->rank - rf1->rank;
+  if (rf1->rank < rf2->rank)
+    return 1;
+  else if (rf1->rank > rf2->rank)
+    return -1;
+
+  return 0;
 }
 
 /* Look for repeated operands in OPS in the multiply tree rooted at
@@ -7418,6 +7430,7 @@ init_reassoc (void)
   free (bbs);
   calculate_dominance_info (CDI_POST_DOMINATORS);
   plus_negates = vNULL;
+  mark_ssa_maybe_undefs ();
 }
 
 /* Cleanup after the reassociation pass, and print stats if

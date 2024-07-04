@@ -1,5 +1,5 @@
 /* Compute different info about registers.
-   Copyright (C) 1987-2023 Free Software Foundation, Inc.
+   Copyright (C) 1987-2024 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -418,6 +418,16 @@ init_reg_sets_1 (void)
 	  SET_HARD_REG_BIT (fixed_reg_set, i);
 	  SET_HARD_REG_BIT (global_reg_set, i);
 	}
+    }
+
+  /* Recalculate eh_return_data_regs.  */
+  CLEAR_HARD_REG_SET (eh_return_data_regs);
+  for (i = 0; ; ++i)
+    {
+      unsigned int regno = EH_RETURN_DATA_REGNO (i);
+      if (regno == INVALID_REGNUM)
+	break;
+      SET_HARD_REG_BIT (eh_return_data_regs, regno);
     }
 
   memset (have_regs_of_mode, 0, sizeof (have_regs_of_mode));

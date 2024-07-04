@@ -1,5 +1,5 @@
 /* Subroutines used for expanding RISC-V builtins.
-   Copyright (C) 2011-2023 Free Software Foundation, Inc.
+   Copyright (C) 2011-2024 Free Software Foundation, Inc.
    Contributed by Andrew Waterman (andrew@sifive.com).
 
 This file is part of GCC.
@@ -41,6 +41,10 @@ along with GCC; see the file COPYING3.  If not see
 #include "backend.h"
 #include "gimple.h"
 #include "gimple-iterator.h"
+#include "alias.h"
+#include "emit-rtl.h"
+#include "builtins.h"
+#include "explow.h"
 
 /* Macros to create an enumeration identifier for a function prototype.  */
 #define RISCV_FTYPE_NAME0(A) RISCV_##A##_FTYPE
@@ -49,6 +53,8 @@ along with GCC; see the file COPYING3.  If not see
 #define RISCV_FTYPE_NAME3(A, B, C, D) RISCV_##A##_FTYPE_##B##_##C##_##D
 #define RISCV_FTYPE_NAME4(A, B, C, D, E) \
   RISCV_##A##_FTYPE_##B##_##C##_##D##_##E
+#define RISCV_FTYPE_NAME5(A, B, C, D, E, F) \
+  RISCV_##A##_FTYPE_##B##_##C##_##D##_##E##_##F
 
 /* Classifies the prototype of a built-in function.  */
 enum riscv_function_type {
@@ -64,7 +70,10 @@ enum riscv_builtin_type {
   RISCV_BUILTIN_DIRECT,
 
   /* Likewise, but with return type VOID.  */
-  RISCV_BUILTIN_DIRECT_NO_TARGET
+  RISCV_BUILTIN_DIRECT_NO_TARGET,
+
+  /* for zacas.  */
+  RISCV_BUILTIN_ZACAS,
 };
 
 /* Declare an availability predicate for built-in functions.  */
@@ -101,10 +110,14 @@ AVAIL (flush32, TARGET_ZICBOM && !TARGET_64BIT)
 AVAIL (flush64, TARGET_ZICBOM && TARGET_64BIT)
 AVAIL (inval32, TARGET_ZICBOM && !TARGET_64BIT)
 AVAIL (inval64, TARGET_ZICBOM && TARGET_64BIT)
+AVAIL (zacas_amocas32, TARGET_ZACAS && !TARGET_64BIT)
+AVAIL (zacas_amocas64, TARGET_ZACAS && TARGET_64BIT)
+AVAIL (zacas_amocas128, TARGET_ZACAS && TARGET_64BIT)
 AVAIL (zero32,  TARGET_ZICBOZ && !TARGET_64BIT)
 AVAIL (zero64,  TARGET_ZICBOZ && TARGET_64BIT)
 AVAIL (prefetchi32, TARGET_ZICBOP && !TARGET_64BIT)
 AVAIL (prefetchi64, TARGET_ZICBOP && TARGET_64BIT)
+AVAIL (crypto_zbkb, TARGET_ZBKB)
 AVAIL (crypto_zbkb32, TARGET_ZBKB && !TARGET_64BIT)
 AVAIL (crypto_zbkb64, TARGET_ZBKB && TARGET_64BIT)
 AVAIL (crypto_zbkx32, TARGET_ZBKX && !TARGET_64BIT)
@@ -119,16 +132,22 @@ AVAIL (crypto_zknh32, TARGET_ZKNH && !TARGET_64BIT)
 AVAIL (crypto_zknh64, TARGET_ZKNH && TARGET_64BIT)
 AVAIL (crypto_zksh, TARGET_ZKSH)
 AVAIL (crypto_zksed, TARGET_ZKSED)
+AVAIL (clmul_zbkc_or_zbc, (TARGET_ZBKC || TARGET_ZBC))
 AVAIL (clmul_zbkc32_or_zbc32, (TARGET_ZBKC || TARGET_ZBC) && !TARGET_64BIT)
 AVAIL (clmul_zbkc64_or_zbc64, (TARGET_ZBKC || TARGET_ZBC) && TARGET_64BIT)
 AVAIL (clmulr_zbc32, TARGET_ZBC && !TARGET_64BIT)
 AVAIL (clmulr_zbc64, TARGET_ZBC && TARGET_64BIT)
+AVAIL (zbb, TARGET_ZBB)
+AVAIL (zbb64, TARGET_ZBB && TARGET_64BIT)
+AVAIL (zbb64_or_zbkb64, (TARGET_ZBKB || TARGET_ZBB) && TARGET_64BIT)
+AVAIL (zbb_or_zbkb, (TARGET_ZBKB || TARGET_ZBB))
 AVAIL (hint_pause, (!0))
 
 // CORE-V AVAIL
 AVAIL (cvmac, TARGET_XCVMAC && !TARGET_64BIT)
 AVAIL (cvalu, TARGET_XCVALU && !TARGET_64BIT)
 AVAIL (cvelw, TARGET_XCVELW && !TARGET_64BIT)
+AVAIL (cvsimd, TARGET_XCVSIMD && !TARGET_64BIT)
 
 /* Construct a riscv_builtin_description from the given arguments.
 
@@ -144,6 +163,22 @@ AVAIL (cvelw, TARGET_XCVELW && !TARGET_64BIT)
    riscv_builtin_avail_.  */
 #define RISCV_BUILTIN(INSN, NAME, BUILTIN_TYPE,	FUNCTION_TYPE, AVAIL)	\
   { CODE_FOR_riscv_ ## INSN, "__builtin_riscv_" NAME,			\
+    BUILTIN_TYPE, FUNCTION_TYPE, riscv_builtin_avail_ ## AVAIL }
+
+/* Construct a riscv_builtin_description from the given arguments like RISCV_BUILTIN.
+
+   INSN is the name of the associated instruction pattern, without the
+   leading CODE_FOR_.
+
+   NAME is the name of the function itself, without the leading
+   "__builtin_riscv_".
+
+   BUILTIN_TYPE and FUNCTION_TYPE are riscv_builtin_description fields.
+
+   AVAIL is the name of the availability predicate, without the leading
+   riscv_builtin_avail_.  */
+#define RISCV_BUILTIN_NO_PREFIX(INSN, NAME, BUILTIN_TYPE,	FUNCTION_TYPE, AVAIL)	\
+  { CODE_FOR_ ## INSN, "__builtin_riscv_" NAME,			\
     BUILTIN_TYPE, FUNCTION_TYPE, riscv_builtin_avail_ ## AVAIL }
 
 /* Define __builtin_riscv_<INSN>, which is a RISCV_BUILTIN_DIRECT function
@@ -168,6 +203,8 @@ AVAIL (cvelw, TARGET_XCVELW && !TARGET_64BIT)
 #define RISCV_ATYPE_QI intQI_type_node
 #define RISCV_ATYPE_HI intHI_type_node
 #define RISCV_ATYPE_SI intSI_type_node
+#define RISCV_ATYPE_DI intDI_type_node
+#define RISCV_ATYPE_TI intTI_type_node
 #define RISCV_ATYPE_VOID_PTR ptr_type_node
 #define RISCV_ATYPE_INT_PTR integer_ptr_type_node
 
@@ -184,10 +221,14 @@ AVAIL (cvelw, TARGET_XCVELW && !TARGET_64BIT)
 #define RISCV_FTYPE_ATYPES4(A, B, C, D, E) \
   RISCV_ATYPE_##A, RISCV_ATYPE_##B, RISCV_ATYPE_##C, RISCV_ATYPE_##D, \
   RISCV_ATYPE_##E
+#define RISCV_FTYPE_ATYPES5(A, B, C, D, E, F) \
+  RISCV_ATYPE_##A, RISCV_ATYPE_##B, RISCV_ATYPE_##C, RISCV_ATYPE_##D, \
+  RISCV_ATYPE_##E, RISCV_ATYPE_##F
 
 static const struct riscv_builtin_description riscv_builtins[] = {
   #include "riscv-cmo.def"
   #include "riscv-scalar-crypto.def"
+  #include "riscv-zacas.def"
   #include "corev.def"
 
   DIRECT_BUILTIN (frflags, RISCV_USI_FTYPE, hard_float),
@@ -207,6 +248,7 @@ static GTY(()) int riscv_builtin_decl_index[NUM_INSN_CODES];
   riscv_builtin_decls[riscv_builtin_decl_index[(CODE)]]
 
 tree riscv_float16_type_node = NULL_TREE;
+tree riscv_bfloat16_type_node = NULL_TREE;
 
 /* Return the function type associated with function prototype TYPE.  */
 
@@ -250,6 +292,21 @@ riscv_init_builtin_types (void)
   if (!maybe_get_identifier ("_Float16"))
     lang_hooks.types.register_builtin_type (riscv_float16_type_node,
 					    "_Float16");
+
+  /* Provide the __bf16 type and bfloat16_type_node if needed.  */
+  if (!bfloat16_type_node)
+    {
+      riscv_bfloat16_type_node = make_node (REAL_TYPE);
+      TYPE_PRECISION (riscv_bfloat16_type_node) = 16;
+      SET_TYPE_MODE (riscv_bfloat16_type_node, BFmode);
+      layout_type (riscv_bfloat16_type_node);
+    }
+  else
+    riscv_bfloat16_type_node = bfloat16_type_node;
+
+  if (!maybe_get_identifier ("__bf16"))
+    lang_hooks.types.register_builtin_type (riscv_bfloat16_type_node,
+					    "__bf16");
 }
 
 /* Implement TARGET_INIT_BUILTINS.  */
@@ -305,6 +362,32 @@ riscv_prepare_builtin_arg (struct expand_operand *op, tree exp, unsigned argno)
   create_input_operand (op, expand_normal (arg), TYPE_MODE (TREE_TYPE (arg)));
 }
 
+static rtx
+get_builtin_sync_mem (tree loc, machine_mode mode)
+{
+  rtx addr, mem;
+  int addr_space = TYPE_ADDR_SPACE (POINTER_TYPE_P (TREE_TYPE (loc))
+				    ? TREE_TYPE (TREE_TYPE (loc))
+				    : TREE_TYPE (loc));
+  scalar_int_mode addr_mode = targetm.addr_space.address_mode (addr_space);
+
+  addr = expand_expr (loc, NULL_RTX, addr_mode, EXPAND_SUM);
+  addr = convert_memory_address (addr_mode, addr);
+  mem = gen_rtx_MEM (mode, addr);
+
+  set_mem_addr_space (mem, addr_space);
+
+  mem = validize_mem (mem);
+
+  /* The alignment needs to be at least according to that of the mode.  */
+  set_mem_align (mem, MAX (GET_MODE_ALIGNMENT (mode),
+			   get_pointer_alignment (loc)));
+  set_mem_alias_set (mem, ALIAS_SET_MEMORY_BARRIER);
+  MEM_VOLATILE_P (mem) = 1;
+
+  return mem;
+}
+
 /* Expand instruction ICODE as part of a built-in function sequence.
    Use the first NOPS elements of OPS as the instruction's operands.
    HAS_TARGET_P is true if operand 0 is a target; it is false if the
@@ -348,6 +431,40 @@ riscv_expand_builtin_direct (enum insn_code icode, rtx target, tree exp,
     riscv_prepare_builtin_arg (&ops[opno++], exp, argno);
 
   return riscv_expand_builtin_insn (icode, opno, ops, has_target_p);
+}
+
+static rtx
+riscv_expand_builtin_zacas (enum insn_code icode, tree exp)
+{
+  struct expand_operand ops[5];
+
+  int opno = 0;
+  gcc_assert (call_expr_nargs (exp)
+	      == insn_data[icode].n_generator_args);
+  for (int argno = 0; argno < call_expr_nargs (exp); argno++)
+    {
+  expand_operand *op = &ops[opno++];
+  tree arg = CALL_EXPR_ARG (exp, argno);
+  machine_mode mode = TYPE_MODE (TREE_TYPE (arg));
+  switch (argno)
+    {
+    case 0:
+      create_fixed_operand (op, get_builtin_sync_mem (arg, mode));
+      break;
+    case 3:
+    case 4:
+      {
+    enum memmodel model = memmodel_from_int (INTVAL (expand_normal (arg)));
+    create_integer_operand (op, model);
+    break;
+      }
+    default:
+      create_input_operand (op, expand_normal (arg), mode);
+      break;
+    }
+    }
+
+  return riscv_expand_builtin_insn (icode, opno, ops, false);
 }
 
 /* Implement TARGET_GIMPLE_FOLD_BUILTIN.  */
@@ -402,7 +519,10 @@ riscv_expand_builtin (tree exp, rtx target, rtx subtarget ATTRIBUTE_UNUSED,
 
 	  case RISCV_BUILTIN_DIRECT_NO_TARGET:
 	    return riscv_expand_builtin_direct (d->icode, target, exp, false);
-	  }
+
+    case RISCV_BUILTIN_ZACAS:
+	    return riscv_expand_builtin_zacas (d->icode, exp);
+    }
       }
     }
 

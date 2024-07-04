@@ -1,6 +1,6 @@
 /* Offload image generation tool for PTX.
 
-   Copyright (C) 2014-2023 Free Software Foundation, Inc.
+   Copyright (C) 2014-2024 Free Software Foundation, Inc.
 
    Contributed by Nathan Sidwell <nathan@codesourcery.com> and
    Bernd Schmidt <bernds@codesourcery.com>.
@@ -638,7 +638,9 @@ main (int argc, char **argv)
   const char *outname = 0;
 
   progname = tool_name;
+  gcc_init_libintl ();
   diagnostic_initialize (global_dc, 0);
+  diagnostic_color_init (global_dc);
 
   if (atexit (mkoffload_cleanup) != 0)
     fatal_error (input_location, "atexit failed");

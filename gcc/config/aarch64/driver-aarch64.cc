@@ -1,5 +1,5 @@
 /* Native CPU detection for aarch64.
-   Copyright (C) 2015-2023 Free Software Foundation, Inc.
+   Copyright (C) 2015-2024 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -452,7 +452,7 @@ host_detect_local_cpu (int argc, const char **argv)
   if (tune)
     return res;
 
-  /* Add any features that should be be present, but can't be verified using
+  /* Add any features that should be present, but can't be verified using
      the /proc/cpuinfo "Features" list.  */
   extension_flags |= unchecked_extension_flags & default_flags;
 

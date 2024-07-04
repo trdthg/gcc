@@ -1,5 +1,5 @@
 /* ACLE support for Arm MVE
-   Copyright (C) 2021-2023 Free Software Foundation, Inc.
+   Copyright (C) 2021-2024 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -657,7 +657,7 @@ function_instance::reads_global_state_p () const
   if (flags & CP_READ_FPCR)
     return true;
 
-  return false;
+  return flags & CP_READ_MEMORY;
 }
 
 /* Return true if calls to the function could modify some form of

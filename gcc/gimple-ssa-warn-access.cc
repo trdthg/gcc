@@ -1,7 +1,7 @@
 /* Pass to detect and issue warnings for invalid accesses, including
    invalid or mismatched allocation/deallocation calls.
 
-   Copyright (C) 2020-2023 Free Software Foundation, Inc.
+   Copyright (C) 2020-2024 Free Software Foundation, Inc.
    Contributed by Martin Sebor <msebor@redhat.com>.
 
    This file is part of GCC.
@@ -330,7 +330,7 @@ check_nul_terminated_array (GimpleOrTree expr, tree src, tree bound)
   wide_int bndrng[2];
   if (bound)
     {
-      Value_Range r (TREE_TYPE (bound));
+      int_range_max r (TREE_TYPE (bound));
 
       get_range_query (cfun)->range_of_expr (r, bound);
 
@@ -1701,6 +1701,7 @@ new_delete_mismatch_p (const demangle_component &newc,
 
     case DEMANGLE_COMPONENT_FUNCTION_PARAM:
     case DEMANGLE_COMPONENT_TEMPLATE_PARAM:
+    case DEMANGLE_COMPONENT_UNNAMED_TYPE:
       return newc.u.s_number.number != delc.u.s_number.number;
 
     case DEMANGLE_COMPONENT_CHARACTER:
@@ -1761,7 +1762,7 @@ new_delete_mismatch_p (tree new_decl, tree delete_decl)
   void *np = NULL, *dp = NULL;
   demangle_component *ndc = cplus_demangle_v3_components (new_str, 0, &np);
   demangle_component *ddc = cplus_demangle_v3_components (del_str, 0, &dp);
-  bool mismatch = new_delete_mismatch_p (*ndc, *ddc);
+  bool mismatch = ndc && ddc && new_delete_mismatch_p (*ndc, *ddc);
   free (np);
   free (dp);
   return mismatch;
@@ -2815,7 +2816,7 @@ memmodel_to_uhwi (tree ord, gimple *stmt, unsigned HOST_WIDE_INT *cstval)
     {
       /* Use the range query to determine constant values in the absence
 	 of constant propagation (such as at -O0).  */
-      Value_Range rng (TREE_TYPE (ord));
+      int_range_max rng (TREE_TYPE (ord));
       if (!get_range_query (cfun)->range_of_expr (rng, ord, stmt)
 	  || !rng.singleton_p (&ord))
 	return false;
@@ -3405,6 +3406,15 @@ pass_waccess::maybe_check_access_sizes (rdwr_map *rwm, tree fndecl, tree fntype,
 	}
       else
 	access_nelts = rwm->get (sizidx)->size;
+
+      /* If access_nelts is e.g. a PARM_DECL with larger precision than
+	 sizetype, such as __int128 or _BitInt(34123) parameters,
+	 cast it to sizetype.  */
+      if (access_nelts
+	  && INTEGRAL_TYPE_P (TREE_TYPE (access_nelts))
+	  && (TYPE_PRECISION (TREE_TYPE (access_nelts))
+	      > TYPE_PRECISION (sizetype)))
+	access_nelts = fold_convert (sizetype, access_nelts);
 
       /* Format the value or range to avoid an explosion of messages.  */
       char sizstr[80];
@@ -4203,7 +4213,7 @@ pass_waccess::check_pointer_uses (gimple *stmt, tree ptr,
 		 where the realloc call is known to have failed are valid.
 		 Ignore pointers that nothing is known about.  Those could
 		 have escaped along with their nullness.  */
-	      value_range vr;
+	      prange vr;
 	      if (m_ptr_qry.rvals->range_of_expr (vr, realloc_lhs, use_stmt))
 		{
 		  if (vr.zero_p ())

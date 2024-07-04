@@ -1,5 +1,5 @@
 /* ACLE support for AArch64 SME.
-   Copyright (C) 2023 Free Software Foundation, Inc.
+   Copyright (C) 2023-2024 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -112,7 +112,7 @@ add_load_store_slice_operand (function_expander &e, insn_code icode,
   rtx base = e.args[argno];
   if (e.mode_suffix_id == MODE_vnum)
     {
-      rtx vnum = lowpart_subreg (SImode, e.args[vnum_argno], DImode);
+      rtx vnum = force_lowpart_subreg (SImode, e.args[vnum_argno], DImode);
       base = simplify_gen_binary (PLUS, SImode, base, vnum);
     }
   e.add_input_operand (icode, base);

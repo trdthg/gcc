@@ -1,5 +1,5 @@
 ;; Machine description for AArch64 architecture.
-;; Copyright (C) 2009-2023 Free Software Foundation, Inc.
+;; Copyright (C) 2009-2024 Free Software Foundation, Inc.
 ;; Contributed by ARM Ltd.
 ;;
 ;; This file is part of GCC.
@@ -107,9 +107,6 @@
 
 ;; Copy of the above.
 (define_mode_iterator DREG2 [DREG])
-
-;; Advanced SIMD modes for integer divides.
-(define_mode_iterator VQDIV [V4SI V2DI])
 
 ;; All modes suitable to store/load pair (2 elements) using STP/LDP.
 (define_mode_iterator VP_2E [V2SI V2SF V2DI V2DF])
@@ -471,6 +468,10 @@
 ;; elements.
 (define_mode_iterator SVE_FULL_HSDI [VNx8HI VNx4SI VNx2DI])
 
+;; Fully-packed SVE integer vector modes that have 16-bit, 32-bit or 64-bit
+;; elements and Advanced SIMD Fully-packed 64-bit elements.
+(define_mode_iterator SVE_FULL_HSDI_SIMD_DI [SVE_FULL_HSDI V2DI])
+
 ;; Fully-packed SVE integer vector modes that have 16-bit or 32-bit
 ;; elements.
 (define_mode_iterator SVE_FULL_HSI [VNx8HI VNx4SI])
@@ -487,6 +488,10 @@
 
 ;; Fully-packed SVE integer vector modes that have 32-bit or 64-bit elements.
 (define_mode_iterator SVE_FULL_SDI [VNx4SI VNx2DI])
+
+;; Fully-packed SVE and Advanced SIMD integer vector modes that have 32-bit or
+;; 64-bit elements.
+(define_mode_iterator SVE_FULL_SDI_SIMD [SVE_FULL_SDI V4SI V2DI])
 
 ;; 2x and 4x tuples of the above, excluding 2x DI.
 (define_mode_iterator SVE_FULL_SIx2_SDIx4 [VNx8SI VNx16SI VNx8DI])
@@ -549,6 +554,10 @@
 			     VNx8HI VNx4HI VNx2HI
 			     VNx4SI VNx2SI
 			     VNx2DI])
+
+;; All SVE integer vector modes and Advanced SIMD 64-bit vector
+;; element modes
+(define_mode_iterator SVE_I_SIMD_DI [SVE_I V2DI])
 
 ;; SVE integer vector modes whose elements are 16 bits or wider.
 (define_mode_iterator SVE_HSDI [VNx8HI VNx4HI VNx2HI
@@ -1656,6 +1665,8 @@
 ;; Narrowed quad-modes for VQN (Used for XTN2).
 (define_mode_attr VNARROWQ2 [(V8HI "V16QI") (V4SI "V8HI")
 			     (V2DI "V4SI")])
+(define_mode_attr Vnarrowq2 [(V8HI "v16qi") (V4SI "v8hi")
+			     (V2DI "v4si")])
 
 ;; Narrowed modes of vector modes.
 (define_mode_attr VNARROW [(VNx8HI "VNx16QI")
@@ -2266,7 +2277,8 @@
 			 (VNx32HI "VNx8BI") (VNx32HF "VNx8BI")
 			 (VNx32BF "VNx8BI")
 			 (VNx16SI "VNx4BI") (VNx16SF "VNx4BI")
-			 (VNx8DI "VNx2BI") (VNx8DF "VNx2BI")])
+			 (VNx8DI "VNx2BI") (VNx8DF "VNx2BI")
+			 (V4SI "VNx4BI") (V2DI "VNx2BI")])
 
 ;; ...and again in lower case.
 (define_mode_attr vpred [(VNx16QI "vnx16bi") (VNx8QI "vnx8bi")
@@ -2368,6 +2380,7 @@
 
 ;; The constraint to use for an SVE [SU]DOT, FMUL, FMLA or FMLS lane index.
 (define_mode_attr sve_lane_con [(VNx8HI "y") (VNx4SI "y") (VNx2DI "x")
+							  (V2DI "x")
 				(VNx8HF "y") (VNx4SF "y") (VNx2DF "x")])
 
 ;; The constraint to use for an SVE FCMLA lane index.
@@ -2512,6 +2525,7 @@
 
 ;; SVE integer unary operations.
 (define_code_iterator SVE_INT_UNARY [abs neg not clrsb clz popcount
+				     bitreverse
 				     (ss_abs "TARGET_SVE2")
 				     (ss_neg "TARGET_SVE2")])
 
@@ -2560,6 +2574,7 @@
 			 (clrsb "clrsb")
 			 (clz "clz")
 			 (popcount "popcount")
+			 (bitreverse "rbit")
 			 (and "and")
 			 (ior "ior")
 			 (xor "xor")
@@ -2772,6 +2787,7 @@
 			      (clrsb "cls")
 			      (clz "clz")
 			      (popcount "cnt")
+			      (bitreverse "rbit")
 			      (ss_plus "sqadd")
 			      (us_plus "uqadd")
 			      (ss_minus "sqsub")
@@ -2977,7 +2993,7 @@
 
 (define_int_iterator LAST [UNSPEC_LASTA UNSPEC_LASTB])
 
-(define_int_iterator SVE_INT_UNARY [UNSPEC_RBIT UNSPEC_REVB
+(define_int_iterator SVE_INT_UNARY [UNSPEC_REVB
 				    UNSPEC_REVH UNSPEC_REVW])
 
 (define_int_iterator SVE_FP_UNARY [UNSPEC_FRECPE UNSPEC_RSQRTE])
@@ -3555,7 +3571,6 @@
 			(UNSPEC_FRECPS "frecps")
 			(UNSPEC_RSQRTE "frsqrte")
 			(UNSPEC_RSQRTS "frsqrts")
-			(UNSPEC_RBIT "rbit")
 			(UNSPEC_REVB "revb")
 			(UNSPEC_REVD "revd")
 			(UNSPEC_REVH "revh")
@@ -4026,7 +4041,6 @@
 			     (UNSPEC_PMULLT_PAIR "pmullt")
 			     (UNSPEC_RADDHNB "raddhnb")
 			     (UNSPEC_RADDHNT "raddhnt")
-			     (UNSPEC_RBIT "rbit")
 			     (UNSPEC_REVB "revb")
 			     (UNSPEC_REVH "revh")
 			     (UNSPEC_REVW "revw")
@@ -4403,8 +4417,7 @@
 				(UNSPEC_PFIRST "8") (UNSPEC_PNEXT "64")])
 
 ;; The minimum number of element bits that an instruction can handle.
-(define_int_attr min_elem_bits [(UNSPEC_RBIT "8")
-				(UNSPEC_REVB "16")
+(define_int_attr min_elem_bits [(UNSPEC_REVB "16")
 				(UNSPEC_REVH "32")
 				(UNSPEC_REVW "64")])
 

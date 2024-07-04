@@ -1,6 +1,6 @@
 /* Call-backs for C++ error reporting.
    This code is non-reentrant.
-   Copyright (C) 1993-2023 Free Software Foundation, Inc.
+   Copyright (C) 1993-2024 Free Software Foundation, Inc.
    This file is part of GCC.
 
 GCC is free software; you can redistribute it and/or modify
@@ -34,7 +34,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "c-family/c-objc.h"
 #include "ubsan.h"
 #include "internal-fn.h"
-#include "gcc-rich-location.h"
+#include "c-family/c-type-mismatch.h"
 #include "cp-name-hint.h"
 #include "attribs.h"
 
@@ -180,7 +180,7 @@ cxx_initialize_diagnostics (diagnostic_context *context)
   diagnostic_starter (context) = cp_diagnostic_starter;
   /* diagnostic_finalizer is already c_diagnostic_finalizer.  */
   diagnostic_format_decoder (context) = cp_printer;
-  pp->m_format_postprocessor = new cxx_format_postprocessor ();
+  pp_format_postprocessor (pp) = new cxx_format_postprocessor ();
 }
 
 /* Dump an '@module' name suffix for DECL, if any.  */
@@ -210,7 +210,7 @@ dump_module_suffix (cxx_pretty_printer *pp, tree decl)
     if (const char *n = module_name (m, false))
       {
 	pp_character (pp, '@');
-	pp->padding = pp_none;
+	pp->set_padding (pp_none);
 	pp_string (pp, n);
       }
 }
@@ -840,10 +840,14 @@ dump_aggr_type (cxx_pretty_printer *pp, tree t, int flags)
     {
       /* A lambda's "type" is essentially its signature.  */
       pp_string (pp, M_("<lambda"));
-      if (lambda_function (t))
-	dump_parameters (pp,
-                         FUNCTION_FIRST_USER_PARMTYPE (lambda_function (t)),
-			 flags);
+      tree const fn = lambda_function (t);
+      if (fn)
+	{
+	  int const parm_flags
+	    = DECL_XOBJ_MEMBER_FUNCTION_P (fn) ? TFF_XOBJ_FUNC | flags
+					       : flags;
+	  dump_parameters (pp, FUNCTION_FIRST_USER_PARMTYPE (fn), parm_flags);
+	}
       pp_greater (pp);
     }
   else if (!decl || IDENTIFIER_ANON_P (DECL_NAME (decl)))
@@ -917,7 +921,7 @@ dump_type_prefix (cxx_pretty_printer *pp, tree t, int flags)
 	    else
 	      pp_ampersand (pp);
 	  }
-	pp->padding = pp_before;
+	pp->set_padding (pp_before);
 	pp_cxx_cv_qualifier_seq (pp, t);
       }
       break;
@@ -935,7 +939,7 @@ dump_type_prefix (cxx_pretty_printer *pp, tree t, int flags)
 	}
       pp_cxx_star (pp);
       pp_cxx_cv_qualifier_seq (pp, t);
-      pp->padding = pp_before;
+      pp->set_padding (pp_before);
       break;
 
       /* This can be reached without a pointer when dealing with
@@ -982,7 +986,7 @@ dump_type_prefix (cxx_pretty_printer *pp, tree t, int flags)
     case FIXED_POINT_TYPE:
     case NULLPTR_TYPE:
       dump_type (pp, t, flags);
-      pp->padding = pp_before;
+      pp->set_padding (pp_before);
       break;
 
     default:
@@ -1031,7 +1035,7 @@ dump_type_suffix (cxx_pretty_printer *pp, tree t, int flags)
 	   anyway; they may in g++, but we'll just pretend otherwise.  */
 	dump_parameters (pp, arg, flags & ~TFF_FUNCTION_DEFAULT_ARGUMENTS);
 
-	pp->padding = pp_before;
+	pp->set_padding (pp_before);
 	pp_cxx_cv_qualifiers (pp, type_memfn_quals (t),
 			      TREE_CODE (t) == FUNCTION_TYPE
 			      && (flags & TFF_POINTER));
@@ -1045,7 +1049,7 @@ dump_type_suffix (cxx_pretty_printer *pp, tree t, int flags)
 	  {
 	    pp_space (pp);
 	    pp_c_attributes_display (pp, TYPE_ATTRIBUTES (t));
-	    pp->padding = pp_before;
+	    pp->set_padding (pp_before);
 	  }
 	dump_type_suffix (pp, TREE_TYPE (t), flags);
 	break;
@@ -1403,10 +1407,8 @@ dump_decl (cxx_pretty_printer *pp, tree t, int flags)
 	  break;
 	}
 
-      /* If there's only one function, just treat it like an ordinary
-	 FUNCTION_DECL.  */
-      t = OVL_FIRST (t);
-      /* Fall through.  */
+      /* If there's only one function, dump that.  */
+      return dump_decl (pp, OVL_FIRST (t), flags);
 
     case FUNCTION_DECL:
       if (! DECL_LANG_SPECIFIC (t))
@@ -1712,15 +1714,17 @@ dump_lambda_function (cxx_pretty_printer *pp,
 {
   /* A lambda's signature is essentially its "type".  */
   dump_type (pp, DECL_CONTEXT (fn), flags);
-  if (TREE_CODE (TREE_TYPE (fn)) == FUNCTION_TYPE)
+  if (DECL_XOBJ_MEMBER_FUNCTION_P (fn))
+    /* Early escape.  */;
+  else if (TREE_CODE (TREE_TYPE (fn)) == FUNCTION_TYPE)
     {
-      pp->padding = pp_before;
+      pp->set_padding (pp_before);
       pp_c_ws_string (pp, "static");
     }
   else if (!(TYPE_QUALS (class_of_this_parm (TREE_TYPE (fn)))
 	     & TYPE_QUAL_CONST))
     {
-      pp->padding = pp_before;
+      pp->set_padding (pp_before);
       pp_c_ws_string (pp, "mutable");
     }
   dump_substitution (pp, fn, template_parms, template_args, flags);
@@ -1833,24 +1837,26 @@ dump_function_decl (cxx_pretty_printer *pp, tree t, int flags)
 
   if (!(flags & TFF_NO_FUNCTION_ARGUMENTS))
     {
-      dump_parameters (pp, parmtypes, flags);
+      int const parm_flags
+	= DECL_XOBJ_MEMBER_FUNCTION_P (t) ? TFF_XOBJ_FUNC | flags : flags;
+      dump_parameters (pp, parmtypes, parm_flags);
 
       if (TREE_CODE (fntype) == METHOD_TYPE)
 	{
-	  pp->padding = pp_before;
+	  pp->set_padding (pp_before);
 	  pp_cxx_cv_qualifier_seq (pp, class_of_this_parm (fntype));
 	  dump_ref_qualifier (pp, fntype, flags);
 	}
 
       if (tx_safe_fn_type_p (fntype))
 	{
-	  pp->padding = pp_before;
+	  pp->set_padding (pp_before);
 	  pp_cxx_ws_string (pp, "transaction_safe");
 	}
 
       if (flags & TFF_EXCEPTION_SPECIFICATION)
 	{
-	  pp->padding = pp_before;
+	  pp->set_padding (pp_before);
 	  dump_exception_spec (pp, exceptions, flags);
 	}
 
@@ -1912,6 +1918,8 @@ dump_parameters (cxx_pretty_printer *pp, tree parmtypes, int flags)
   for (first = 1; parmtypes != void_list_node;
        parmtypes = TREE_CHAIN (parmtypes))
     {
+      if (first && flags & TFF_XOBJ_FUNC)
+	pp_string (pp, "this ");
       if (!first)
 	pp_separate_with_comma (pp);
       first = 0;
@@ -1942,7 +1950,7 @@ dump_ref_qualifier (cxx_pretty_printer *pp, tree t, int flags ATTRIBUTE_UNUSED)
 {
   if (FUNCTION_REF_QUALIFIED (t))
     {
-      pp->padding = pp_before;
+      pp->set_padding (pp_before);
       if (FUNCTION_RVALUE_QUALIFIED (t))
         pp_cxx_ws_string (pp, "&&");
       else
@@ -2497,6 +2505,15 @@ dump_expr (cxx_pretty_printer *pp, tree t, int flags)
       pp_cxx_right_bracket (pp);
       break;
 
+    case OMP_ARRAY_SECTION:
+      dump_expr (pp, TREE_OPERAND (t, 0), flags);
+      pp_cxx_left_bracket (pp);
+      dump_expr (pp, TREE_OPERAND (t, 1), flags);
+      pp_colon (pp);
+      dump_expr (pp, TREE_OPERAND (t, 2), flags);
+      pp_cxx_right_bracket (pp);
+      break;
+
     case UNARY_PLUS_EXPR:
       dump_unary_op (pp, "+", t, flags);
       break;
@@ -2643,6 +2660,7 @@ dump_expr (cxx_pretty_printer *pp, tree t, int flags)
     CASE_CONVERT:
     case IMPLICIT_CONV_EXPR:
     case VIEW_CONVERT_EXPR:
+    case EXCESS_PRECISION_EXPR:
       {
 	tree op = TREE_OPERAND (t, 0);
 
@@ -2654,6 +2672,8 @@ dump_expr (cxx_pretty_printer *pp, tree t, int flags)
 
 	tree ttype = TREE_TYPE (t);
 	tree optype = TREE_TYPE (op);
+	if (!optype)
+	  optype = unknown_type_node;
 
 	if (TREE_CODE (ttype) != TREE_CODE (optype)
 	    && INDIRECT_TYPE_P (ttype)
@@ -2672,7 +2692,7 @@ dump_expr (cxx_pretty_printer *pp, tree t, int flags)
 	    else
 	      dump_unary_op (pp, "&", t, flags);
 	  }
-	else if (!same_type_p (TREE_TYPE (op), TREE_TYPE (t)))
+	else if (!same_type_p (optype, ttype))
 	  {
 	    /* It is a cast, but we cannot tell whether it is a
 	       reinterpret or static cast. Use the C style notation.  */
@@ -3134,7 +3154,7 @@ static void
 reinit_cxx_pp (void)
 {
   pp_clear_output_area (cxx_pp);
-  cxx_pp->padding = pp_none;
+  cxx_pp->set_padding (pp_none);
   pp_indentation (cxx_pp) = 0;
   pp_needs_newline (cxx_pp) = false;
   pp_show_color (cxx_pp) = false;
@@ -3515,7 +3535,7 @@ static const char *
 cv_to_string (tree p, int v)
 {
   reinit_cxx_pp ();
-  cxx_pp->padding = v ? pp_before : pp_none;
+  cxx_pp->set_padding (v ? pp_before : pp_none);
   pp_cxx_cv_qualifier_seq (cxx_pp, p);
   return pp_ggc_formatted_text (cxx_pp);
 }
@@ -3660,8 +3680,7 @@ cp_print_error_function (diagnostic_context *context,
       pp_newline (context->printer);
 
       diagnostic_set_last_function (context, diagnostic);
-      pp_destroy_prefix (context->printer);
-      context->printer->prefix = old_prefix;
+      context->printer->set_prefix (old_prefix);
     }
 }
 
@@ -3687,6 +3706,8 @@ function_category (tree fn)
 	return _("In destructor %qD");
       else if (LAMBDA_FUNCTION_P (fn))
 	return _("In lambda function");
+      else if (DECL_XOBJ_MEMBER_FUNCTION_P (fn))
+	return _("In explicit object member function %qD");
       else
 	return _("In member function %qD");
     }
@@ -3769,7 +3790,9 @@ print_instantiation_partial_context_line (diagnostic_context *context,
 		   : _("required from here\n"));
     }
   gcc_rich_location rich_loc (loc);
+  char *saved_prefix = pp_take_prefix (context->printer);
   diagnostic_show_locus (context, &rich_loc, DK_NOTE);
+  pp_set_prefix (context->printer, saved_prefix);
 }
 
 /* Same as print_instantiation_full_context but less verbose.  */
@@ -4282,14 +4305,8 @@ static void
 append_formatted_chunk (pretty_printer *pp, const char *content)
 {
   output_buffer *buffer = pp_buffer (pp);
-  struct chunk_info *chunk_array = buffer->cur_chunk_array;
-  const char **args = chunk_array->args;
-
-  unsigned int chunk_idx;
-  for (chunk_idx = 0; args[chunk_idx]; chunk_idx++)
-    ;
-  args[chunk_idx++] = content;
-  args[chunk_idx] = NULL;
+  chunk_info *chunk_array = buffer->cur_chunk_array;
+  chunk_array->append_formatted_chunk (content);
 }
 
 /* Create a copy of CONTENT, with quotes added, and,
@@ -4444,9 +4461,9 @@ cp_printer (pretty_printer *pp, text_info *text, const char *spec,
 	    int precision, bool wide, bool set_locus, bool verbose,
 	    bool *quoted, const char **buffer_ptr)
 {
-  gcc_assert (pp->m_format_postprocessor);
+  gcc_assert (pp_format_postprocessor (pp));
   cxx_format_postprocessor *postprocessor
-    = static_cast <cxx_format_postprocessor *> (pp->m_format_postprocessor);
+    = static_cast <cxx_format_postprocessor *> (pp_format_postprocessor (pp));
 
   const char *result;
   tree t = NULL;

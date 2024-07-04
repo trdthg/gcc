@@ -1,5 +1,5 @@
 ;; Machine description for auto-vectorization using RVV for GNU compiler.
-;; Copyright (C) 2023 Free Software Foundation, Inc.
+;; Copyright (C) 2023-2024 Free Software Foundation, Inc.
 ;; Contributed by Juzhe Zhong (juzhe.zhong@rivai.ai), RiVAI Technologies Ltd.
 
 ;; This file is part of GCC.
@@ -664,7 +664,7 @@
   [(set (match_operand:<VM> 0 "register_operand")
 	(match_operator:<VM> 1 "comparison_operator"
 	  [(match_operand:V_VLSI 2 "register_operand")
-	   (match_operand:V_VLSI 3 "register_operand")]))]
+	   (match_operand:V_VLSI 3 "nonmemory_operand")]))]
   "TARGET_VECTOR"
   {
     riscv_vector::expand_vec_cmp (operands[0], GET_CODE (operands[1]),
@@ -677,7 +677,7 @@
   [(set (match_operand:<VM> 0 "register_operand")
 	(match_operator:<VM> 1 "comparison_operator"
 	  [(match_operand:V_VLSI 2 "register_operand")
-	   (match_operand:V_VLSI 3 "register_operand")]))]
+	   (match_operand:V_VLSI 3 "nonmemory_operand")]))]
   "TARGET_VECTOR"
   {
     riscv_vector::expand_vec_cmp (operands[0], GET_CODE (operands[1]),
@@ -1383,7 +1383,7 @@
 (define_expand "vec_extract<mode><vel>"
   [(set (match_operand:<VEL>	  0 "register_operand")
      (vec_select:<VEL>
-       (match_operand:V_VLS	  1 "register_operand")
+       (match_operand:V_VLS_ZVFH  1 "register_operand")
        (parallel
 	 [(match_operand	  2 "nonmemory_operand")])))]
   "TARGET_VECTOR"
@@ -1427,7 +1427,7 @@
 (define_expand "vec_extract<mode>qi"
   [(set (match_operand:QI	  0 "register_operand")
      (vec_select:QI
-       (match_operand:VB	  1 "register_operand")
+       (match_operand:VB_VLS	  1 "register_operand")
        (parallel
 	 [(match_operand	  2 "nonmemory_operand")])))]
   "TARGET_VECTOR"
@@ -1453,7 +1453,7 @@
 (define_expand "vec_extract<mode>bi"
   [(set (match_operand:QI	  0 "register_operand")
      (vec_select:QI
-       (match_operand:VB	  1 "register_operand")
+       (match_operand:VB_VLS	  1 "register_operand")
        (parallel
 	 [(match_operand	  2 "nonmemory_operand")])))]
   "TARGET_VECTOR"
@@ -1566,7 +1566,7 @@
 })
 
 ;; -------------------------------------------------------------------------------
-;; - [INT] POPCOUNT.
+;; - [INT] POPCOUNT, CTZ and CLZ.
 ;; -------------------------------------------------------------------------------
 
 (define_expand "popcount<mode>2"
@@ -1574,8 +1574,34 @@
    (match_operand:V_VLSI 1 "register_operand")]
   "TARGET_VECTOR"
 {
-  riscv_vector::expand_popcount (operands);
+  if (!TARGET_ZVBB)
+    riscv_vector::expand_popcount (operands);
+  else
+    {
+      riscv_vector::emit_vlmax_insn (code_for_pred_v (POPCOUNT, <MODE>mode),
+				     riscv_vector::CPOP_OP, operands);
+    }
   DONE;
+})
+
+(define_expand "ctz<mode>2"
+  [(match_operand:V_VLSI 0 "register_operand")
+   (match_operand:V_VLSI 1 "register_operand")]
+  "TARGET_ZVBB"
+  {
+    riscv_vector::emit_vlmax_insn (code_for_pred_v (CTZ, <MODE>mode),
+				   riscv_vector::CPOP_OP, operands);
+    DONE;
+})
+
+(define_expand "clz<mode>2"
+  [(match_operand:V_VLSI 0 "register_operand")
+   (match_operand:V_VLSI 1 "register_operand")]
+  "TARGET_ZVBB"
+  {
+    riscv_vector::emit_vlmax_insn (code_for_pred_v (CLZ, <MODE>mode),
+				   riscv_vector::CPOP_OP, operands);
+    DONE;
 })
 
 
@@ -2345,39 +2371,39 @@
 ;;  op[0] = (narrow) ((wide) op[1] + (wide) op[2] + 1)) >> 1;
 ;; -------------------------------------------------------------------------
 
-(define_expand "<u>avg<v_double_trunc>3_floor"
+(define_expand "avg<v_double_trunc>3_floor"
  [(set (match_operand:<V_DOUBLE_TRUNC> 0 "register_operand")
    (truncate:<V_DOUBLE_TRUNC>
-    (<ext_to_rshift>:VWEXTI
+    (ashiftrt:VWEXTI
      (plus:VWEXTI
-      (any_extend:VWEXTI
+      (sign_extend:VWEXTI
        (match_operand:<V_DOUBLE_TRUNC> 1 "register_operand"))
-      (any_extend:VWEXTI
+      (sign_extend:VWEXTI
        (match_operand:<V_DOUBLE_TRUNC> 2 "register_operand"))))))]
   "TARGET_VECTOR"
 {
   /* First emit a widening addition.  */
   rtx tmp1 = gen_reg_rtx (<MODE>mode);
   rtx ops1[] = {tmp1, operands[1], operands[2]};
-  insn_code icode = code_for_pred_dual_widen (PLUS, <CODE>, <MODE>mode);
+  insn_code icode = code_for_pred_dual_widen (PLUS, SIGN_EXTEND, <MODE>mode);
   riscv_vector::emit_vlmax_insn (icode, riscv_vector::BINARY_OP, ops1);
 
   /* Then a narrowing shift.  */
   rtx ops2[] = {operands[0], tmp1, const1_rtx};
-  icode = code_for_pred_narrow_scalar (<EXT_TO_RSHIFT>, <MODE>mode);
+  icode = code_for_pred_narrow_scalar (ASHIFTRT, <MODE>mode);
   riscv_vector::emit_vlmax_insn (icode, riscv_vector::BINARY_OP, ops2);
   DONE;
 })
 
-(define_expand "<u>avg<v_double_trunc>3_ceil"
+(define_expand "avg<v_double_trunc>3_ceil"
  [(set (match_operand:<V_DOUBLE_TRUNC> 0 "register_operand")
    (truncate:<V_DOUBLE_TRUNC>
-    (<ext_to_rshift>:VWEXTI
+    (ashiftrt:VWEXTI
      (plus:VWEXTI
       (plus:VWEXTI
-       (any_extend:VWEXTI
+       (sign_extend:VWEXTI
 	(match_operand:<V_DOUBLE_TRUNC> 1 "register_operand"))
-       (any_extend:VWEXTI
+       (sign_extend:VWEXTI
 	(match_operand:<V_DOUBLE_TRUNC> 2 "register_operand")))
       (const_int 1)))))]
   "TARGET_VECTOR"
@@ -2385,7 +2411,7 @@
   /* First emit a widening addition.  */
   rtx tmp1 = gen_reg_rtx (<MODE>mode);
   rtx ops1[] = {tmp1, operands[1], operands[2]};
-  insn_code icode = code_for_pred_dual_widen (PLUS, <CODE>, <MODE>mode);
+  insn_code icode = code_for_pred_dual_widen (PLUS, SIGN_EXTEND, <MODE>mode);
   riscv_vector::emit_vlmax_insn (icode, riscv_vector::BINARY_OP, ops1);
 
   /* Then add 1.  */
@@ -2396,8 +2422,34 @@
 
   /* Finally, a narrowing shift.  */
   rtx ops3[] = {operands[0], tmp2, const1_rtx};
-  icode = code_for_pred_narrow_scalar (<EXT_TO_RSHIFT>, <MODE>mode);
+  icode = code_for_pred_narrow_scalar (ASHIFTRT, <MODE>mode);
   riscv_vector::emit_vlmax_insn (icode, riscv_vector::BINARY_OP, ops3);
+  DONE;
+})
+
+;; csrwi vxrm, 2
+;; vaaddu.vv vd, vs2, vs1
+(define_expand "uavg<mode>3_floor"
+ [(match_operand:V_VLSI 0 "register_operand")
+  (match_operand:V_VLSI 1 "register_operand")
+  (match_operand:V_VLSI 2 "register_operand")]
+  "TARGET_VECTOR"
+{
+  insn_code icode = code_for_pred (UNSPEC_VAADDU, <MODE>mode);
+  riscv_vector::emit_vlmax_insn (icode, riscv_vector::BINARY_OP_VXRM_RDN, operands);
+  DONE;
+})
+
+;; csrwi vxrm, 0
+;; vaaddu.vv vd, vs2, vs1
+(define_expand "uavg<mode>3_ceil"
+ [(match_operand:V_VLSI 0 "register_operand")
+  (match_operand:V_VLSI 1 "register_operand")
+  (match_operand:V_VLSI 2 "register_operand")]
+  "TARGET_VECTOR"
+{
+  insn_code icode = code_for_pred (UNSPEC_VAADDU, <MODE>mode);
+  riscv_vector::emit_vlmax_insn (icode, riscv_vector::BINARY_OP_VXRM_RNU, operands);
   DONE;
 })
 
@@ -2579,10 +2631,100 @@
   [(match_operand      0 "register_operand")
    (match_operand      1 "memory_operand")
    (match_operand:ANYI 2 "const_int_operand")]
-  "TARGET_VECTOR"
+  "TARGET_VECTOR && !TARGET_XTHEADVECTOR"
   {
     riscv_vector::expand_rawmemchr(<MODE>mode, operands[0], operands[1],
 				   operands[2]);
     DONE;
+  }
+)
+
+;; =========================================================================
+;; == [INT] Saturation ALU.
+;; =========================================================================
+;; Includes:
+;; - add
+;; - sub
+;; =========================================================================
+(define_expand "usadd<mode>3"
+  [(match_operand:V_VLSI 0 "register_operand")
+   (match_operand:V_VLSI 1 "register_operand")
+   (match_operand:V_VLSI 2 "register_operand")]
+  "TARGET_VECTOR"
+  {
+    riscv_vector::expand_vec_usadd (operands[0], operands[1], operands[2], <MODE>mode);
+    DONE;
+  }
+)
+
+(define_expand "ussub<mode>3"
+  [(match_operand:V_VLSI 0 "register_operand")
+   (match_operand:V_VLSI 1 "register_operand")
+   (match_operand:V_VLSI 2 "register_operand")]
+  "TARGET_VECTOR"
+  {
+    riscv_vector::expand_vec_ussub (operands[0], operands[1], operands[2], <MODE>mode);
+    DONE;
+  }
+)
+
+;; =========================================================================
+;; == Early break auto-vectorization patterns
+;; =========================================================================
+
+;; vcond_mask_len (mask, 1s, 0s, len, bias)
+;; => mask[i] = mask[i] && i < len ? 1 : 0
+(define_insn_and_split "vcond_mask_len_<mode>"
+  [(set (match_operand:VB 0 "register_operand")
+    (unspec: VB [
+     (match_operand:VB 1 "register_operand")
+     (match_operand:VB 2 "const_1_operand")
+     (match_operand:VB 3 "const_0_operand")
+     (match_operand 4 "autovec_length_operand")
+     (match_operand 5 "const_0_operand")] UNSPEC_SELECT_MASK))]
+  "TARGET_VECTOR
+   && can_create_pseudo_p ()
+   && riscv_vector::get_vector_mode (Pmode, GET_MODE_NUNITS (<MODE>mode)).exists ()"
+  "#"
+  "&& 1"
+  [(const_int 0)]
+  {
+    machine_mode mode = riscv_vector::get_vector_mode (Pmode,
+			GET_MODE_NUNITS (<MODE>mode)).require ();
+    rtx reg = gen_reg_rtx (mode);
+    riscv_vector::expand_vec_series (reg, const0_rtx, const1_rtx);
+    rtx dup_rtx = gen_rtx_VEC_DUPLICATE (mode, operands[4]);
+    insn_code icode = code_for_pred_cmp_scalar (mode);
+    rtx cmp = gen_rtx_fmt_ee (LTU, <MODE>mode, reg, dup_rtx);
+    rtx ops[] = {operands[0], operands[1], operands[1], cmp, reg, operands[4]};
+    emit_vlmax_insn (icode, riscv_vector::COMPARE_OP_MU, ops);
+    DONE;
+  }
+  [(set_attr "type" "vector")])
+
+;; cbranch
+(define_expand "cbranch<mode>4"
+  [(set (pc)
+	(if_then_else
+	  (match_operator 0 "equality_operator"
+	    [(match_operand:VB_VLS 1 "register_operand")
+	     (match_operand:VB_VLS 2 "reg_or_0_operand")])
+	  (label_ref (match_operand 3 ""))
+	  (pc)))]
+  "TARGET_VECTOR"
+  {
+    rtx pred;
+    if (operands[2] == CONST0_RTX (<MODE>mode))
+      pred = operands[1];
+    else
+      pred = expand_binop (<MODE>mode, xor_optab, operands[1],
+			   operands[2], NULL_RTX, 0,
+			   OPTAB_DIRECT);
+    rtx reg = gen_reg_rtx (Pmode);
+    rtx cpop_ops[] = {reg, pred};
+    emit_vlmax_insn (code_for_pred_popcount (<MODE>mode, Pmode),
+		     riscv_vector::CPOP_OP, cpop_ops);
+    operands[1] = reg;
+    operands[2] = const0_rtx;
   }
 )

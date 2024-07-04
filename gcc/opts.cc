@@ -1,5 +1,5 @@
 /* Command line option handling.
-   Copyright (C) 2002-2023 Free Software Foundation, Inc.
+   Copyright (C) 2002-2024 Free Software Foundation, Inc.
    Contributed by Neil Booth.
 
 This file is part of GCC.
@@ -53,7 +53,7 @@ static void set_Wstrict_aliasing (struct gcc_options *opts, int onoff);
 
 const char *const debug_type_names[] =
 {
-  "none", "dwarf-2", "vms", "ctf", "btf"
+  "none", "dwarf-2", "vms", "ctf", "btf", "codeview"
 };
 
 /* Bitmasks of fundamental debug info formats indexed by enum
@@ -62,13 +62,13 @@ const char *const debug_type_names[] =
 static uint32_t debug_type_masks[] =
 {
   NO_DEBUG, DWARF2_DEBUG, VMS_DEBUG,
-  CTF_DEBUG, BTF_DEBUG
+  CTF_DEBUG, BTF_DEBUG, CODEVIEW_DEBUG
 };
 
 /* Names of the set of debug formats requested by user.  Updated and accessed
    via debug_set_names.  */
 
-static char df_set_names[sizeof "none dwarf-2 vms ctf btf"];
+static char df_set_names[sizeof "none dwarf-2 vms ctf btf codeview"];
 
 /* Get enum debug_info_type of the specified debug format, for error messages.
    Can be used only for individual debug format types.  */
@@ -162,6 +162,14 @@ ctf_debuginfo_p ()
   return (write_symbols & CTF_DEBUG);
 }
 
+/* Return TRUE iff CodeView debug info is enabled.  */
+
+bool
+codeview_debuginfo_p ()
+{
+  return (write_symbols & CODEVIEW_DEBUG);
+}
+
 /* Return TRUE iff dwarf2 debug info is enabled.  */
 
 bool
@@ -176,7 +184,8 @@ dwarf_debuginfo_p (struct gcc_options *opts)
 bool dwarf_based_debuginfo_p ()
 {
   return ((write_symbols & CTF_DEBUG)
-	  || (write_symbols & BTF_DEBUG));
+	  || (write_symbols & BTF_DEBUG)
+	  || (write_symbols & CODEVIEW_DEBUG));
 }
 
 /* All flag uses below need to explicitely reference the option sets
@@ -655,6 +664,7 @@ static const struct default_options default_options_table[] =
       VECT_COST_MODEL_VERY_CHEAP },
     { OPT_LEVELS_2_PLUS, OPT_finline_functions, NULL, 1 },
     { OPT_LEVELS_2_PLUS, OPT_ftree_loop_distribute_patterns, NULL, 1 },
+    { OPT_LEVELS_2_PLUS, OPT_flate_combine_instructions, NULL, 1 },
 
     /* -O2 and above optimizations, but not -Os or -Og.  */
     { OPT_LEVELS_2_PLUS_SPEED_ONLY, OPT_falign_functions, NULL, 1 },
@@ -1390,7 +1400,7 @@ finish_options (struct gcc_options *opts, struct gcc_options *opts_set,
     opts->x_debug_nonbind_markers_p
       = (opts->x_optimize
 	 && opts->x_debug_info_level >= DINFO_LEVEL_NORMAL
-	 && dwarf_debuginfo_p (opts)
+	 && (dwarf_debuginfo_p (opts) || codeview_debuginfo_p ())
 	 && !(opts->x_flag_selective_scheduling
 	      || opts->x_flag_selective_scheduling2));
 
@@ -2928,6 +2938,10 @@ common_handle_option (struct gcc_options *opts,
       dc->m_source_printing.enabled = value;
       break;
 
+    case OPT_fdiagnostics_show_event_links:
+      dc->m_source_printing.show_event_links_p = value;
+      break;
+
     case OPT_fdiagnostics_show_labels:
       dc->m_source_printing.show_labels_p = value;
       break;
@@ -2948,7 +2962,8 @@ common_handle_option (struct gcc_options *opts,
 	{
 	  const char *basename = (opts->x_dump_base_name ? opts->x_dump_base_name
 				  : opts->x_main_input_basename);
-	  diagnostic_output_format_init (dc, basename,
+	  diagnostic_output_format_init (dc,
+					 opts->x_main_input_filename, basename,
 					 (enum diagnostics_output_format)value,
 					 opts->x_flag_diagnostics_json_formatting);
 	  break;
@@ -3206,6 +3221,9 @@ common_handle_option (struct gcc_options *opts,
       break;
 
     case OPT_gcodeview:
+      set_debug_level (CODEVIEW_DEBUG, false, arg, opts, opts_set, loc);
+      if (opts->x_debug_info_level < DINFO_LEVEL_NORMAL)
+	opts->x_debug_info_level = DINFO_LEVEL_NORMAL;
       break;
 
     case OPT_gbtf:
@@ -3480,7 +3498,8 @@ set_debug_level (uint32_t dinfo, int extended, const char *arg,
 	    warning_at (loc, 0, "target system does not support debug output");
 	}
       else if ((opts->x_write_symbols & CTF_DEBUG)
-	       || (opts->x_write_symbols & BTF_DEBUG))
+	       || (opts->x_write_symbols & BTF_DEBUG)
+	       || (opts->x_write_symbols & CODEVIEW_DEBUG))
 	{
 	  opts->x_write_symbols |= DWARF2_DEBUG;
 	  opts_set->x_write_symbols |= DWARF2_DEBUG;
@@ -3710,14 +3729,6 @@ get_option_html_page (int option_index)
 {
   const cl_option *cl_opt = &cl_options[option_index];
 
-  /* Analyzer options are on their own page.  */
-  if (strstr (cl_opt->opt_text, "analyzer-"))
-    return "gcc/Static-Analyzer-Options.html";
-
-  /* Handle -flto= option.  */
-  if (strstr (cl_opt->opt_text, "flto"))
-    return "gcc/Optimize-Options.html";
-
 #ifdef CL_Fortran
   if ((cl_opt->flags & CL_Fortran) != 0
       /* If it is option common to both C/C++ and Fortran, it is documented
@@ -3730,32 +3741,49 @@ get_option_html_page (int option_index)
     return "gfortran/Error-and-Warning-Options.html";
 #endif
 
-  return "gcc/Warning-Options.html";
+  return nullptr;
+}
+
+/* Get the url within the documentation for this option, or NULL.  */
+
+label_text
+get_option_url_suffix (int option_index, unsigned lang_mask)
+{
+  if (const char *url = get_opt_url_suffix (option_index, lang_mask))
+
+    return label_text::borrow (url);
+
+  /* Fallback code for some options that aren't handled byt opt_url_suffixes
+     e.g. links below "gfortran/".  */
+  if (const char *html_page = get_option_html_page (option_index))
+    return label_text::take
+      (concat (html_page,
+	       /* Expect an anchor of the form "index-Wfoo" e.g.
+		  <a name="index-Wformat"></a>, and thus an id within
+		  the page of "#index-Wformat".  */
+	       "#index",
+	       cl_options[option_index].opt_text,
+	       NULL));
+
+  return label_text ();
 }
 
 /* Return malloced memory for a URL describing the option OPTION_INDEX
    which enabled a diagnostic (context CONTEXT).  */
 
 char *
-get_option_url (const diagnostic_context *, int option_index)
+get_option_url (const diagnostic_context *,
+		int option_index,
+		unsigned lang_mask)
 {
   if (option_index)
-    return concat (/* DOCUMENTATION_ROOT_URL should be supplied via
-		      #include "config.h" (see --with-documentation-root-url),
-		      and should have a trailing slash.  */
-		   DOCUMENTATION_ROOT_URL,
+    {
+      label_text url_suffix = get_option_url_suffix (option_index, lang_mask);
+      if (url_suffix.get ())
+	return concat (DOCUMENTATION_ROOT_URL, url_suffix.get (), nullptr);
+    }
 
-		   /* get_option_html_page will return something like
-		      "gcc/Warning-Options.html".  */
-		   get_option_html_page (option_index),
-
-		   /* Expect an anchor of the form "index-Wfoo" e.g.
-		      <a name="index-Wformat"></a>, and thus an id within
-		      the URL of "#index-Wformat".  */
-		   "#index", cl_options[option_index].opt_text,
-		   NULL);
-  else
-    return NULL;
+  return nullptr;
 }
 
 /* Return a heap allocated producer with command line options.  */
@@ -3796,6 +3824,7 @@ gen_command_line_string (cl_decoded_option *options,
       case OPT_fdiagnostics_show_location_:
       case OPT_fdiagnostics_show_option:
       case OPT_fdiagnostics_show_caret:
+      case OPT_fdiagnostics_show_event_links:
       case OPT_fdiagnostics_show_labels:
       case OPT_fdiagnostics_show_line_numbers:
       case OPT_fdiagnostics_color_:
@@ -3886,17 +3915,35 @@ gen_producer_string (const char *language_string, cl_decoded_option *options,
 
 namespace selftest {
 
-/* Verify that get_option_html_page works as expected.  */
+/* Verify that get_option_url_suffix works as expected.  */
 
 static void
-test_get_option_html_page ()
+test_get_option_url_suffix ()
 {
-  ASSERT_STREQ (get_option_html_page (OPT_Wcpp), "gcc/Warning-Options.html");
-  ASSERT_STREQ (get_option_html_page (OPT_Wanalyzer_double_free),
-	     "gcc/Static-Analyzer-Options.html");
+  ASSERT_STREQ (get_option_url_suffix (OPT_Wcpp, 0).get (),
+		"gcc/Warning-Options.html#index-Wcpp");
+  ASSERT_STREQ (get_option_url_suffix (OPT_Wanalyzer_double_free, 0).get (),
+		"gcc/Static-Analyzer-Options.html#index-Wanalyzer-double-free");
+
+  /* Test of a D-specific option.  */
+#ifdef CL_D
+  ASSERT_EQ (get_option_url_suffix (OPT_fbounds_check_, 0).get (), nullptr);
+  ASSERT_STREQ (get_option_url_suffix (OPT_fbounds_check_, CL_D).get (),
+		"gdc/Runtime-Options.html#index-fbounds-check");
+
+  /* Test of a D-specific override to an option URL.  */
+  /* Generic URL.  */
+  ASSERT_STREQ (get_option_url_suffix (OPT_fmax_errors_, 0).get (),
+		"gcc/Warning-Options.html#index-fmax-errors");
+  /* D-specific URL.  */
+  ASSERT_STREQ (get_option_url_suffix (OPT_fmax_errors_, CL_D).get (),
+		"gdc/Warnings.html#index-fmax-errors");
+#endif
+
 #ifdef CL_Fortran
-  ASSERT_STREQ (get_option_html_page (OPT_Wline_truncation),
-		"gfortran/Error-and-Warning-Options.html");
+  ASSERT_STREQ
+    (get_option_url_suffix (OPT_Wline_truncation, CL_Fortran).get (),
+     "gfortran/Error-and-Warning-Options.html#index-Wline-truncation");
 #endif
 }
 
@@ -3959,7 +4006,7 @@ test_enum_sets ()
 void
 opts_cc_tests ()
 {
-  test_get_option_html_page ();
+  test_get_option_url_suffix ();
   test_enum_sets ();
 }
 

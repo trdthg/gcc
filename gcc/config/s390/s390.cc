@@ -1,5 +1,5 @@
 /* Subroutines used for code generation on IBM S/390 and zSeries
-   Copyright (C) 1999-2023 Free Software Foundation, Inc.
+   Copyright (C) 1999-2024 Free Software Foundation, Inc.
    Contributed by Hartmut Penner (hpenner@de.ibm.com) and
                   Ulrich Weigand (uweigand@de.ibm.com) and
                   Andreas Krebbel (Andreas.Krebbel@de.ibm.com).
@@ -78,11 +78,14 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-pass.h"
 #include "context.h"
 #include "builtins.h"
+#include "ifcvt.h"
 #include "rtl-iter.h"
 #include "intl.h"
 #include "tm-constrs.h"
 #include "tree-vrp.h"
 #include "symbol-summary.h"
+#include "sreal.h"
+#include "ipa-cp.h"
 #include "ipa-prop.h"
 #include "ipa-fnsummary.h"
 #include "sched-int.h"
@@ -3344,7 +3347,9 @@ s390_decompose_addrstyle_without_index (rtx op, rtx *base,
   while (op && GET_CODE (op) == SUBREG)
     op = SUBREG_REG (op);
 
-  if (op && GET_CODE (op) != REG)
+  if (op && (!REG_P (op)
+	     || (reload_completed
+		 && !REGNO_OK_FOR_BASE_P (REGNO (op)))))
     return false;
 
   if (offset)
@@ -4777,7 +4782,7 @@ s390_secondary_reload (bool in_p, rtx x, reg_class_t rclass_i,
       if (in_p
 	  && s390_loadrelative_operand_p (x, &symref, &offset)
 	  && mode == Pmode
-	  && !SYMBOL_FLAG_NOTALIGN2_P (symref)
+	  && (!SYMBOL_REF_P (symref) || !SYMBOL_FLAG_NOTALIGN2_P (symref))
 	  && (offset & 1) == 1)
 	sri->icode = ((mode == DImode) ? CODE_FOR_reloaddi_larl_odd_addend_z10
 		      : CODE_FOR_reloadsi_larl_odd_addend_z10);
@@ -8323,7 +8328,7 @@ s390_asm_output_function_label (FILE *out_file, const char *fname,
       asm_fprintf (out_file, "\t# fn:%s wd%d\n", fname,
 		   s390_warn_dynamicstack_p);
     }
-  ASM_OUTPUT_LABEL (out_file, fname);
+  assemble_function_label_raw (out_file, fname);
   if (hw_after > 0)
     asm_fprintf (out_file,
 		 "\t# post-label NOPs for hotpatch (%d halfwords)\n",
@@ -9982,7 +9987,7 @@ s390_const_int_pool_entry_p (rtx mem, HOST_WIDE_INT *val)
      - (mem (unspec [(symbol_ref) (reg)] UNSPEC_LTREF)).
      - (mem (symbol_ref)).  */
 
-  if (!MEM_P (mem))
+  if (!MEM_P (mem) || GET_MODE_CLASS (GET_MODE (mem)) != MODE_INT)
     return false;
 
   rtx addr = XEXP (mem, 0);
@@ -9996,8 +10001,18 @@ s390_const_int_pool_entry_p (rtx mem, HOST_WIDE_INT *val)
     return false;
 
   rtx val_rtx = get_pool_constant (sym);
-  if (!CONST_INT_P (val_rtx))
+  machine_mode mode = get_pool_mode (sym);
+  if (!CONST_INT_P (val_rtx)
+      || GET_MODE_CLASS (mode) != MODE_INT
+      || GET_MODE_SIZE (mode) < GET_MODE_SIZE (GET_MODE (mem)))
     return false;
+
+  if (mode != GET_MODE (mem))
+    {
+      val_rtx = simplify_subreg (GET_MODE (mem), val_rtx, mode, 0);
+      if (val_rtx == NULL_RTX || !CONST_INT_P (val_rtx))
+	return false;
+    }
 
   if (val != nullptr)
     *val = INTVAL (val_rtx);
@@ -13800,10 +13815,19 @@ s390_encode_section_info (tree decl, rtx rtl, int first)
 	 that can go wrong (i.e. no FUNC_DECLs).
 	 All symbols without an explicit alignment are assumed to be 2
 	 byte aligned as mandated by our ABI.  This behavior can be
-	 overridden for external symbols with the -munaligned-symbols
-	 switch.  */
+	 overridden for external and weak symbols with the
+	 -munaligned-symbols switch.
+	 For all external symbols without explicit alignment
+	 DECL_ALIGN is already trimmed down to 8, however for weak
+	 symbols this does not happen.  These cases are catched by the
+	 type size check.  */
+      const_tree size = TYPE_SIZE (TREE_TYPE (decl));
+      unsigned HOST_WIDE_INT size_num = (tree_fits_uhwi_p (size)
+					 ? tree_to_uhwi (size) : 0);
       if ((DECL_USER_ALIGN (decl) && DECL_ALIGN (decl) % 16)
-	  || (s390_unaligned_symbols_p && !decl_binds_to_current_def_p (decl)))
+	  || (s390_unaligned_symbols_p
+	      && !decl_binds_to_current_def_p (decl)
+	      && (DECL_USER_ALIGN (decl) ? DECL_ALIGN (decl) % 16 : size_num < 16)))
 	SYMBOL_FLAG_SET_NOTALIGN2 (XEXP (rtl, 0));
       else if (DECL_ALIGN (decl) % 32)
 	SYMBOL_FLAG_SET_NOTALIGN4 (XEXP (rtl, 0));
@@ -16083,7 +16107,7 @@ s390_option_override_internal (struct gcc_options *opts,
     }
   else
     {
-      if (TARGET_CPU_VX_P (opts))
+      if (TARGET_CPU_VX_P (opts) && TARGET_ZARCH_P (opts->x_target_flags))
 	/* Enable vector support if available and not explicitly disabled
 	   by user.  E.g. with -m31 -march=z13 -mzarch */
 	opts->x_target_flags |= MASK_OPT_VX;
@@ -17867,37 +17891,92 @@ expand_perm_as_a_vlbr_vstbr_candidate (const struct expand_vec_perm_d &d)
 
   if (memcmp (d.perm, perm[0], MAX_VECT_LEN) == 0)
     {
-      rtx target = gen_rtx_SUBREG (V8HImode, d.target, 0);
-      rtx op0 = gen_rtx_SUBREG (V8HImode, d.op0, 0);
-      emit_insn (gen_bswapv8hi (target, op0));
+      if (!d.testing_p)
+	{
+	  rtx target = gen_rtx_SUBREG (V8HImode, d.target, 0);
+	  rtx op0 = gen_rtx_SUBREG (V8HImode, d.op0, 0);
+	  emit_insn (gen_bswapv8hi (target, op0));
+	}
       return true;
     }
 
   if (memcmp (d.perm, perm[1], MAX_VECT_LEN) == 0)
     {
-      rtx target = gen_rtx_SUBREG (V4SImode, d.target, 0);
-      rtx op0 = gen_rtx_SUBREG (V4SImode, d.op0, 0);
-      emit_insn (gen_bswapv4si (target, op0));
+      if (!d.testing_p)
+	{
+	  rtx target = gen_rtx_SUBREG (V4SImode, d.target, 0);
+	  rtx op0 = gen_rtx_SUBREG (V4SImode, d.op0, 0);
+	  emit_insn (gen_bswapv4si (target, op0));
+	}
       return true;
     }
 
   if (memcmp (d.perm, perm[2], MAX_VECT_LEN) == 0)
     {
-      rtx target = gen_rtx_SUBREG (V2DImode, d.target, 0);
-      rtx op0 = gen_rtx_SUBREG (V2DImode, d.op0, 0);
-      emit_insn (gen_bswapv2di (target, op0));
+      if (!d.testing_p)
+	{
+	  rtx target = gen_rtx_SUBREG (V2DImode, d.target, 0);
+	  rtx op0 = gen_rtx_SUBREG (V2DImode, d.op0, 0);
+	  emit_insn (gen_bswapv2di (target, op0));
+	}
       return true;
     }
 
   if (memcmp (d.perm, perm[3], MAX_VECT_LEN) == 0)
     {
-      rtx target = gen_rtx_SUBREG (V1TImode, d.target, 0);
-      rtx op0 = gen_rtx_SUBREG (V1TImode, d.op0, 0);
-      emit_insn (gen_bswapv1ti (target, op0));
+      if (!d.testing_p)
+	{
+	  rtx target = gen_rtx_SUBREG (V1TImode, d.target, 0);
+	  rtx op0 = gen_rtx_SUBREG (V1TImode, d.op0, 0);
+	  emit_insn (gen_bswapv1ti (target, op0));
+	}
       return true;
     }
 
   return false;
+}
+
+static bool
+expand_perm_as_replicate (const struct expand_vec_perm_d &d)
+{
+  unsigned char i;
+  unsigned char elem;
+  rtx base = d.op0;
+  rtx insn = NULL_RTX;
+
+  /* Needed to silence maybe-uninitialized warning.  */
+  gcc_assert (d.nelt > 0);
+  elem = d.perm[0];
+  for (i = 1; i < d.nelt; ++i)
+    if (d.perm[i] != elem)
+      return false;
+  if (!d.testing_p)
+    {
+      if (elem >= d.nelt)
+	{
+	  base = d.op1;
+	  elem -= d.nelt;
+	}
+      if (memory_operand (base, d.vmode))
+	{
+	  /* Try to use vector load and replicate.  */
+	  rtx new_base = adjust_address (base, GET_MODE_INNER (d.vmode),
+					 elem * GET_MODE_UNIT_SIZE (d.vmode));
+	  insn = maybe_gen_vec_splats (d.vmode, d.target, new_base);
+	}
+      if (insn == NULL_RTX)
+	{
+	  base = force_reg (d.vmode, base);
+	  insn = maybe_gen_vec_splat (d.vmode, d.target, base, GEN_INT (elem));
+	}
+
+      if (insn == NULL_RTX)
+	return false;
+      emit_insn (insn);
+      return true;
+    }
+  else
+    return maybe_code_for_vec_splat (d.vmode) != CODE_FOR_nothing;
 }
 
 /* Try to find the best sequence for the vector permute operation
@@ -17916,6 +17995,9 @@ vectorize_vec_perm_const_1 (const struct expand_vec_perm_d &d)
     return true;
 
   if (expand_perm_as_a_vlbr_vstbr_candidate (d))
+    return true;
+
+  if (expand_perm_as_replicate (d))
     return true;
 
   return false;
@@ -17969,6 +18051,46 @@ s390_vectorize_vec_perm_const (machine_mode vmode, machine_mode op_mode,
     d.only_op1 = true;
 
   return vectorize_vec_perm_const_1 (d);
+}
+
+/* Consider a NOCE conversion as profitable if there is at least one
+   conditional move.  */
+
+static bool
+s390_noce_conversion_profitable_p (rtx_insn *seq, struct noce_if_info *if_info)
+{
+  if (if_info->speed_p)
+    {
+      for (rtx_insn *insn = seq; insn; insn = NEXT_INSN (insn))
+	{
+	  rtx set = single_set (insn);
+	  if (set == NULL)
+	    continue;
+	  if (GET_CODE (SET_SRC (set)) != IF_THEN_ELSE)
+	    continue;
+	  rtx src = SET_SRC (set);
+	  machine_mode mode = GET_MODE (src);
+	  if (GET_MODE_CLASS (mode) != MODE_INT
+	      && GET_MODE_CLASS (mode) != MODE_FLOAT)
+	    continue;
+	  if (GET_MODE_SIZE (mode) > UNITS_PER_WORD)
+	    continue;
+	  return true;
+	}
+    }
+  return default_noce_conversion_profitable_p (seq, if_info);
+}
+
+/* Implement TARGET_C_MODE_FOR_FLOATING_TYPE.  Return TFmode or DFmode
+   for TI_LONG_DOUBLE_TYPE which is for long double type, go with the
+   default one for the others.  */
+
+static machine_mode
+s390_c_mode_for_floating_type (enum tree_index ti)
+{
+  if (ti == TI_LONG_DOUBLE_TYPE)
+    return TARGET_LONG_DOUBLE_128 ? TFmode : DFmode;
+  return default_mode_for_floating_type (ti);
 }
 
 /* Initialize GCC target structure.  */
@@ -18283,6 +18405,12 @@ s390_vectorize_vec_perm_const (machine_mode vmode, machine_mode op_mode,
 
 #undef TARGET_VECTORIZE_VEC_PERM_CONST
 #define TARGET_VECTORIZE_VEC_PERM_CONST s390_vectorize_vec_perm_const
+
+#undef TARGET_NOCE_CONVERSION_PROFITABLE_P
+#define TARGET_NOCE_CONVERSION_PROFITABLE_P s390_noce_conversion_profitable_p
+
+#undef TARGET_C_MODE_FOR_FLOATING_TYPE
+#define TARGET_C_MODE_FOR_FLOATING_TYPE s390_c_mode_for_floating_type
 
 struct gcc_target targetm = TARGET_INITIALIZER;
 

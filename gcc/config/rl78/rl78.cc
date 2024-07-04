@@ -1,5 +1,5 @@
 /* Subroutines used for code generation on Renesas RL78 processors.
-   Copyright (C) 2011-2023 Free Software Foundation, Inc.
+   Copyright (C) 2011-2024 Free Software Foundation, Inc.
    Contributed by Red Hat.
 
    This file is part of GCC.
@@ -367,6 +367,7 @@ rl78_option_override (void)
       && strcmp (lang_hooks.name, "GNU C11")
       && strcmp (lang_hooks.name, "GNU C17")
       && strcmp (lang_hooks.name, "GNU C23")
+      && strcmp (lang_hooks.name, "GNU C2Y")
       && strcmp (lang_hooks.name, "GNU C89")
       && strcmp (lang_hooks.name, "GNU C99")
       /* Compiling with -flto results in a language of GNU GIMPLE being used... */
@@ -4969,6 +4970,21 @@ rl78_preferred_reload_class (rtx x ATTRIBUTE_UNUSED, reg_class_t rclass)
     rclass = V_REGS;
 
   return rclass;
+}
+
+#undef TARGET_C_MODE_FOR_FLOATING_TYPE
+#define TARGET_C_MODE_FOR_FLOATING_TYPE rl78_c_mode_for_floating_type
+
+/* Implement TARGET_C_MODE_FOR_FLOATING_TYPE.  Return SFmode for
+   TI_DOUBLE_TYPE which is for double type, go with the default
+   one for the others.  */
+
+static machine_mode
+rl78_c_mode_for_floating_type (enum tree_index ti)
+{
+  if (ti == TI_DOUBLE_TYPE)
+    return SFmode;
+  return default_mode_for_floating_type (ti);
 }
 
 

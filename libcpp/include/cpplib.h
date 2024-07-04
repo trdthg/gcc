@@ -1,5 +1,5 @@
 /* Definitions for CPP library.
-   Copyright (C) 1995-2023 Free Software Foundation, Inc.
+   Copyright (C) 1995-2024 Free Software Foundation, Inc.
    Written by Per Bothner, 1994-95.
 
 This program is free software; you can redistribute it and/or modify it
@@ -172,8 +172,9 @@ enum cpp_ttype
 
 /* C language kind, used when calling cpp_create_reader.  */
 enum c_lang {CLK_GNUC89 = 0, CLK_GNUC99, CLK_GNUC11, CLK_GNUC17, CLK_GNUC23,
+	     CLK_GNUC2Y,
 	     CLK_STDC89, CLK_STDC94, CLK_STDC99, CLK_STDC11, CLK_STDC17,
-	     CLK_STDC23,
+	     CLK_STDC23, CLK_STDC2Y,
 	     CLK_GNUCXX, CLK_CXX98, CLK_GNUCXX11, CLK_CXX11,
 	     CLK_GNUCXX14, CLK_CXX14, CLK_GNUCXX17, CLK_CXX17,
 	     CLK_GNUCXX20, CLK_CXX20, CLK_GNUCXX23, CLK_CXX23,
@@ -200,6 +201,7 @@ struct GTY(()) cpp_string {
 #define DECIMAL_INT     (1 << 6) /* Decimal integer, set in c-lex.cc.  */
 #define PURE_ZERO	(1 << 7) /* Single 0 digit, used by the C++ frontend,
 				    set in c-lex.cc.  */
+#define COLON_SCOPE	PURE_ZERO /* Adjacent colons in C < 23.  */
 #define SP_DIGRAPH	(1 << 8) /* # or ## token was a digraph.  */
 #define SP_PREV_WHITE	(1 << 9) /* If whitespace before a ##
 				    operator, or before this token
@@ -1630,5 +1632,12 @@ bool cpp_valid_utf8_p (const char *data, size_t num_bytes);
 
 bool cpp_is_combining_char (cppchar_t c);
 bool cpp_is_printable_char (cppchar_t c);
+
+enum cpp_xid_property {
+  CPP_XID_START = 1,
+  CPP_XID_CONTINUE = 2
+};
+
+unsigned int cpp_check_xid_property (cppchar_t c);
 
 #endif /* ! LIBCPP_CPPLIB_H */

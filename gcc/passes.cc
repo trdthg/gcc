@@ -1,5 +1,5 @@
 /* Top level of GCC compilers (cc1, cc1plus, etc.)
-   Copyright (C) 1987-2023 Free Software Foundation, Inc.
+   Copyright (C) 1987-2024 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -352,7 +352,8 @@ finish_optimization_passes (void)
   gcc::dump_manager *dumps = m_ctxt->get_dumps ();
 
   timevar_push (TV_DUMP);
-  if (profile_arc_flag || flag_test_coverage || flag_branch_probabilities)
+  if (profile_arc_flag || condition_coverage_flag || flag_test_coverage
+      || flag_branch_probabilities)
     {
       dumps->dump_start (pass_profile_1->static_pass_number, NULL);
       end_branch_prob ();

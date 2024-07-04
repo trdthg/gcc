@@ -1,5 +1,5 @@
 /* A state machine for detecting misuses of the malloc/free API.
-   Copyright (C) 2019-2023 Free Software Foundation, Inc.
+   Copyright (C) 2019-2024 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -20,6 +20,7 @@ along with GCC; see the file COPYING3.  If not see
 
 #include "config.h"
 #define INCLUDE_MEMORY
+#define INCLUDE_VECTOR
 #include "system.h"
 #include "coretypes.h"
 #include "make-unique.h"
@@ -29,6 +30,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "gimple.h"
 #include "options.h"
 #include "bitmap.h"
+#include "diagnostic-core.h"
 #include "diagnostic-path.h"
 #include "analyzer/analyzer.h"
 #include "diagnostic-event-id.h"
@@ -46,6 +48,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "analyzer/program-state.h"
 #include "analyzer/checker-event.h"
 #include "analyzer/exploded-graph.h"
+#include "analyzer/inlining-iterator.h"
 
 #if ENABLE_ANALYZER
 
@@ -583,7 +586,7 @@ deallocator_set::dump () const
 {
   pretty_printer pp;
   pp_show_color (&pp) = pp_show_color (global_dc->printer);
-  pp.buffer->stream = stderr;
+  pp.set_output_stream (stderr);
   dump_to_pp (&pp);
   pp_newline (&pp);
   pp_flush (&pp);
@@ -1561,6 +1564,21 @@ public:
     if (linemap_location_from_macro_definition_p (line_table, check_loc))
       return false;
 
+    /* Reject warning if the check is in a loop header within a
+       macro expansion.  This rejects cases like:
+       |  deref of x;
+       |  [...snip...]
+       |  FOR_EACH(x) {
+       |    [...snip...]
+       |  }
+       where the FOR_EACH macro tests for non-nullness of x, since
+       the user is hoping to encapsulate the details of iteration
+       in the macro, and the extra check on the first iteration
+       would just be noise if we reported it.  */
+    if (loop_header_p (m_check_enode->get_point ())
+	&& linemap_location_from_macro_expansion_p (line_table, check_loc))
+      return false;
+
     /* Reject if m_deref_expr is sufficiently different from m_arg
        for cases where the dereference is spelled differently from
        the check, which is probably two different ways to get the
@@ -1616,6 +1634,21 @@ public:
   }
 
 private:
+  static bool loop_header_p (const program_point &point)
+  {
+    const supernode *snode = point.get_supernode ();
+    if (!snode)
+      return false;
+    for (auto &in_edge : snode->m_preds)
+      {
+	if (const cfg_superedge *cfg_in_edge
+	      = in_edge->dyn_cast_cfg_superedge ())
+	  if (cfg_in_edge->back_edge_p ())
+	    return true;
+      }
+    return false;
+  }
+
   static bool sufficiently_similar_p (tree expr_a, tree expr_b)
   {
     pretty_printer *pp_a = global_dc->printer->clone ();
@@ -1951,6 +1984,7 @@ malloc_state_machine::on_stmt (sm_context *sm_ctxt,
 	  }
 
 	if (is_named_call_p (callee_fndecl, "realloc", call, 2)
+	    || is_std_named_call_p (callee_fndecl, "realloc", call, 2)
 	    || is_named_call_p (callee_fndecl, "__builtin_realloc", call, 2))
 	  {
 	    on_realloc_call (sm_ctxt, node, call);
@@ -2167,6 +2201,15 @@ maybe_complain_about_deref_before_check (sm_context *sm_ctxt,
   const frame_region *assumed_nonnull_in_frame = state->m_frame;
   if (checked_in_frame->get_index () > assumed_nonnull_in_frame->get_index ())
     return;
+
+  /* Don't complain if STMT was inlined from another function, to avoid
+     similar false positives involving shared helper functions.  */
+  if (stmt->location)
+    {
+      inlining_info info (stmt->location);
+      if (info.get_extra_frames () > 0)
+	return;
+    }
 
   tree diag_ptr = sm_ctxt->get_diagnostic_tree (ptr);
   if (diag_ptr)

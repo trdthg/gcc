@@ -1,7 +1,7 @@
 /* General types and functions that are uselful for processing of OpenMP,
    OpenACC and similar directivers at various stages of compilation.
 
-   Copyright (C) 2005-2023 Free Software Foundation, Inc.
+   Copyright (C) 2005-2024 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -282,5 +282,8 @@ extern tree omp_accessed_addr (vec<omp_addr_token *> &, unsigned, tree);
 typedef omp_addr_tokenizer::omp_addr_token omp_addr_token;
 
 extern bool omp_parse_expr (vec<omp_addr_token *> &, tree);
+
+extern tree omp_loop_number_of_iterations (tree, int, tree * = NULL);
+extern void omp_maybe_apply_loop_xforms (tree *, tree);
 
 #endif /* GCC_OMP_GENERAL_H */

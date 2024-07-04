@@ -1,6 +1,6 @@
 // <memory_resource> -*- C++ -*-
 
-// Copyright (C) 2018-2023 Free Software Foundation, Inc.
+// Copyright (C) 2018-2024 Free Software Foundation, Inc.
 //
 // This file is part of the GNU ISO C++ Library.  This library is free
 // software; you can redistribute it and/or modify it under the
@@ -305,7 +305,6 @@ namespace pmr
 #endif
 
       template<typename _Up>
-	_GLIBCXX20_DEPRECATED_SUGGEST("allocator_traits::destroy")
 	__attribute__((__nonnull__))
 	void
 	destroy(_Up* __p)

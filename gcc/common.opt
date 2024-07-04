@@ -1,6 +1,6 @@
 ; Options for the language- and target-independent parts of the compiler.
 
-; Copyright (C) 2003-2023 Free Software Foundation, Inc.
+; Copyright (C) 2003-2024 Free Software Foundation, Inc.
 ;
 ; This file is part of GCC.
 ;
@@ -421,6 +421,12 @@ Display target specific command line options (including assembler and linker opt
 
 -time
 Driver Alias(time)
+
+;; Truncate the file specified after linking.
+;; This option is used by lto-wrapper to reduce the peak disk-usage when
+;; linking with many .LTRANS units.
+truncate
+Driver Separate Undocumented MissingArgError(missing filename after %qs)
 
 -verbose
 Driver Alias(v)
@@ -870,6 +876,11 @@ Wcoverage-invalid-line-number
 Common Var(warn_coverage_invalid_linenum) Init(1) Warning
 Warn in case a function ends earlier than it begins due to an invalid linenum macros.
 
+Wcoverage-too-many-conditions
+Common Var(warn_too_many_conditions) Init(1) Warning
+Warn when a conditional has too many terms and condition coverage profiling
+gives up instrumenting the expression.
+
 Wmissing-profile
 Common Var(warn_missing_profile) Init(1) Warning
 Warn in case profiles in -fprofile-use do not exist.
@@ -1039,9 +1050,6 @@ Align the start of functions.
 
 falign-functions=
 Common RejectNegative Joined Var(str_align_functions) Optimization
-
-flimit-function-alignment
-Common Var(flag_limit_function_alignment) Optimization Init(0)
 
 falign-jumps
 Common Var(flag_align_jumps) Optimization
@@ -1262,7 +1270,7 @@ Common Var(flag_cprop_registers) Optimization
 Perform a register copy-propagation optimization pass.
 
 ffold-mem-offsets
-Target Bool Var(flag_fold_mem_offsets) Init(1)
+Common Var(flag_fold_mem_offsets) Init(1) Optimization
 Fold instructions calculating memory offsets to the memory access instruction if possible.
 
 fcrossjumping
@@ -1359,6 +1367,10 @@ Enum(diagnostic_prefixing_rule) String(every-line) Value(DIAGNOSTICS_SHOW_PREFIX
 fdiagnostics-show-caret
 Common Var(flag_diagnostics_show_caret) Init(1)
 Show the source line with a caret indicating the column.
+
+fdiagnostics-show-event-links
+Common Var(flag_diagnostics_show_event_links) Init(1)
+Show lines linking related events in diagnostic paths.
 
 fdiagnostics-show-labels
 Common Var(flag_diagnostics_show_labels) Init(1)
@@ -1783,6 +1795,11 @@ flarge-source-files
 Common Var(flag_large_source_files) Init(0)
 Improve GCC's ability to track column numbers in large source files,
 at the expense of slower compilation.
+
+flate-combine-instructions
+Common Var(flag_late_combine_instructions) Optimization Init(0)
+Run two instruction combination passes late in the pass pipeline;
+one before register allocation and one after.
 
 floop-parallelize-all
 Common Var(flag_loop_parallelize_all) Optimization
@@ -2221,6 +2238,9 @@ Enum(lto_partition_model) String(1to1) Value(LTO_PARTITION_1TO1)
 EnumValue
 Enum(lto_partition_model) String(max) Value(LTO_PARTITION_MAX)
 
+EnumValue
+Enum(lto_partition_model) String(cache) Value(LTO_PARTITION_CACHE)
+
 flto-partition=
 Common Joined RejectNegative Enum(lto_partition_model) Var(flag_lto_partition) Init(LTO_PARTITION_BALANCED)
 Specify the algorithm to partition symbols and vars at linktime.
@@ -2277,6 +2297,10 @@ fmessage-length=
 Common RejectNegative Joined UInteger
 -fmessage-length=<number>	Limit diagnostics to <number> characters per line.  0 suppresses line-wrapping.
 
+fmin-function-alignment=
+Common Joined RejectNegative UInteger Var(flag_min_function_alignment) Optimization
+Align the start of every function.
+
 fmodulo-sched
 Common Var(flag_modulo_sched) Optimization
 Perform SMS based modulo scheduling before the first scheduling pass.
@@ -2294,7 +2318,7 @@ Common Var(flag_move_loop_stores) Optimization
 Move stores out of loops.
 
 fmultiflags
-Common Driver
+Common Driver RejectNegative
 Building block for specs-based multilib-aware TFLAGS.
 
 fdce
@@ -2400,7 +2424,7 @@ Common RejectNegative Joined UInteger Optimization
 -fpack-struct=<number>	Set initial maximum structure member alignment.
 
 fpcc-struct-return
-Common Var(flag_pcc_struct_return,1) Init(DEFAULT_PCC_STRUCT_RETURN)
+Common Var(flag_pcc_struct_return,1) Init(DEFAULT_PCC_STRUCT_RETURN) Optimization
 Return small aggregates in memory, not registers.
 
 fpeel-loops
@@ -2462,6 +2486,10 @@ Generate absolute source path names for gcov.
 fprofile-arcs
 Common Var(profile_arc_flag)
 Insert arc-based program profiling code.
+
+fcondition-coverage
+Common Var(condition_coverage_flag)
+Insert condition coverage profiling code.
 
 fprofile-dir=
 Common Joined RejectNegative Var(profile_data_prefix)
@@ -2586,7 +2614,7 @@ Common Var(flag_record_gcc_switches)
 Record gcc command line switches in the object file.
 
 freg-struct-return
-Common Var(flag_pcc_struct_return,0) Optimization
+Common NegativeAlias Alias(fpcc_struct_return) Optimization
 Return small aggregates in registers.
 
 fregmove
@@ -2600,6 +2628,9 @@ starts and when the destructor finishes.
 
 flifetime-dse=
 Common Joined RejectNegative UInteger Var(flag_lifetime_dse) Optimization IntegerRange(0, 2)
+
+flimit-function-alignment
+Common Var(flag_limit_function_alignment) Optimization Init(0)
 
 flive-patching
 Common RejectNegative Alias(flive-patching=,inline-clone) Optimization
@@ -3507,6 +3538,10 @@ Generate CTF debug information at default level.
 gbtf
 Common Driver RejectNegative JoinedOrMissing
 Generate BTF debug information at default level.
+
+gprune-btf
+Common Driver Var(debug_prune_btf) Init(0)
+Generate pruned BTF when emitting BTF info.
 
 gdwarf
 Common Driver JoinedOrMissing RejectNegative

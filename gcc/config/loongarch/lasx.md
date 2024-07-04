@@ -1,6 +1,6 @@
 ;; Machine Description for LARCH Loongson ASX ASE
 ;;
-;; Copyright (C) 2018 Free Software Foundation, Inc.
+;; Copyright (C) 2018-2024 Free Software Foundation, Inc.
 ;;
 ;; This file is part of GCC.
 ;;
@@ -465,6 +465,11 @@
    (V16HI "w")
    (V32QI "w")])
 
+;; Half modes of all LASX vector modes, in lower-case.
+(define_mode_attr lasxhalf [(V32QI "v16qi")  (V16HI "v8hi")
+             (V8SI "v4si")  (V4DI  "v2di")
+             (V8SF  "v4sf") (V4DF  "v2df")])
+
 (define_expand "vec_init<mode><unitmode>"
   [(match_operand:LASX 0 "register_operand")
    (match_operand:LASX 1 "")]
@@ -474,9 +479,9 @@
   DONE;
 })
 
-(define_expand "vec_initv32qiv16qi"
- [(match_operand:V32QI 0 "register_operand")
-  (match_operand:V16QI 1 "")]
+(define_expand "vec_init<mode><lasxhalf>"
+ [(match_operand:LASX 0 "register_operand")
+  (match_operand:<VHMODE256_ALL> 1 "")]
   "ISA_HAS_LASX"
 {
   loongarch_expand_vector_group_init (operands[0], operands[1]);
@@ -567,12 +572,7 @@
 	  (match_operand 3 "const_<bitmask256>_operand" "")))]
   "ISA_HAS_LASX"
 {
-#if 0
-  if (!TARGET_64BIT && (<MODE>mode == V4DImode || <MODE>mode == V4DFmode))
-    return "#";
-  else
-#endif
-    return "xvinsgr2vr.<lasxfmt>\t%u0,%z1,%y3";
+  return "xvinsgr2vr.<lasxfmt>\t%u0,%z1,%y3";
 }
   [(set_attr "type" "simd_insert")
    (set_attr "mode" "<MODE>")])
@@ -643,7 +643,9 @@
 	   (match_operand     3 "const_uimm8_operand")]
 	  UNSPEC_LASX_XVPERMI_Q))]
   "ISA_HAS_LASX"
-  "xvpermi.q\t%u0,%u2,%3"
+{
+  return "xvpermi.q\t%u0,%u2,%3";
+}
   [(set_attr "type" "simd_splat")
    (set_attr "mode" "<MODE>")])
 
@@ -733,6 +735,21 @@
       INTVAL (operands[2]));
   DONE;
 })
+
+(define_insn_and_split "vec_extract<mode>_0"
+  [(set (match_operand:<UNITMODE> 0 "register_operand" "=f")
+        (vec_select:<UNITMODE>
+          (match_operand:FLASX 1 "register_operand" "f")
+          (parallel [(const_int 0)])))]
+  "ISA_HAS_LSX"
+  "#"
+  "&& reload_completed"
+  [(set (match_dup 0) (match_dup 1))]
+{
+  operands[1] = gen_rtx_REG (<UNITMODE>mode, REGNO (operands[1]));
+}
+  [(set_attr "move_type" "fmove")
+   (set_attr "mode" "<UNITMODE>")])
 
 (define_expand "vec_perm<mode>"
  [(match_operand:LASX 0 "register_operand")
@@ -843,32 +860,6 @@
   [(const_int 0)]
 {
   loongarch_split_move (operands[0], operands[1]);
-  DONE;
-})
-
-;; Offset load
-(define_expand "lasx_mxld_<lasxfmt_f>"
-  [(match_operand:LASX 0 "register_operand")
-   (match_operand 1 "pmode_register_operand")
-   (match_operand 2 "aq10<lasxfmt>_operand")]
-  "ISA_HAS_LASX"
-{
-  rtx addr = plus_constant (GET_MODE (operands[1]), operands[1],
-				      INTVAL (operands[2]));
-  loongarch_emit_move (operands[0], gen_rtx_MEM (<MODE>mode, addr));
-  DONE;
-})
-
-;; Offset store
-(define_expand "lasx_mxst_<lasxfmt_f>"
-  [(match_operand:LASX 0 "register_operand")
-   (match_operand 1 "pmode_register_operand")
-   (match_operand 2 "aq10<lasxfmt>_operand")]
-  "ISA_HAS_LASX"
-{
-  rtx addr = plus_constant (GET_MODE (operands[1]), operands[1],
-			    INTVAL (operands[2]));
-  loongarch_emit_move (gen_rtx_MEM (<MODE>mode, addr), operands[0]);
   DONE;
 })
 
@@ -1382,8 +1373,7 @@
 	   (match_operand:LASX 3 "register_operand")]))]
   "ISA_HAS_LASX"
 {
-  bool ok = loongarch_expand_vec_cmp (operands);
-  gcc_assert (ok);
+  loongarch_expand_vec_cmp (operands);
   DONE;
 })
 
@@ -1394,8 +1384,7 @@
 	   (match_operand:ILASX 3 "register_operand")]))]
   "ISA_HAS_LASX"
 {
-  bool ok = loongarch_expand_vec_cmp (operands);
-  gcc_assert (ok);
+  loongarch_expand_vec_cmp (operands);
   DONE;
 })
 
@@ -1452,10 +1441,7 @@
   if (which_alternative == 1)
     return "xvldi.b\t%u0,0" ;
 
-  if (!TARGET_64BIT && (<MODE>mode == V2DImode || <MODE>mode == V2DFmode))
-    return "#";
-  else
-    return "xvreplgr2vr.<lasxfmt>\t%u0,%z1";
+  return "xvreplgr2vr.<lasxfmt>\t%u0,%z1";
 }
   [(set_attr "type" "simd_fill")
    (set_attr "mode" "<MODE>")
@@ -1539,7 +1525,7 @@
   [(set (match_operand:FLASX 0 "register_operand" "=f")
     (unspec:FLASX [(match_operand:FLASX 1 "register_operand" "f")]
 		  UNSPEC_LASX_XVFRECIPE))]
-  "ISA_HAS_LASX && TARGET_FRECIPE"
+  "ISA_HAS_LASX && ISA_HAS_FRECIPE"
   "xvfrecipe.<flasxfmt>\t%u0,%u1"
   [(set_attr "type" "simd_fdiv")
    (set_attr "mode" "<MODE>")])
@@ -1572,7 +1558,7 @@
   [(set (match_operand:FLASX 0 "register_operand" "=f")
     (unspec:FLASX [(match_operand:FLASX 1 "register_operand" "f")]
 		  UNSPEC_LASX_XVFRSQRTE))]
-  "ISA_HAS_LASX && TARGET_FRECIPE"
+  "ISA_HAS_LASX && ISA_HAS_FRECIPE"
   "xvfrsqrte.<flasxfmt>\t%u0,%u1"
   [(set_attr "type" "simd_fdiv")
    (set_attr "mode" "<MODE>")])
@@ -3024,22 +3010,6 @@
 	(abs:V8SF (match_operand:V8SF 1 "register_operand" "f")))]
   "ISA_HAS_LASX"
   "xvbitclri.w\t%u0,%u1,31"
-  [(set_attr "type" "simd_logic")
-   (set_attr "mode" "V8SF")])
-
-(define_insn "negv4df2"
-  [(set (match_operand:V4DF 0 "register_operand" "=f")
-	(neg:V4DF (match_operand:V4DF 1 "register_operand" "f")))]
-  "ISA_HAS_LASX"
-  "xvbitrevi.d\t%u0,%u1,63"
-  [(set_attr "type" "simd_logic")
-   (set_attr "mode" "V4DF")])
-
-(define_insn "negv8sf2"
-  [(set (match_operand:V8SF 0 "register_operand" "=f")
-	(neg:V8SF (match_operand:V8SF 1 "register_operand" "f")))]
-  "ISA_HAS_LASX"
-  "xvbitrevi.w\t%u0,%u1,31"
   [(set_attr "type" "simd_logic")
    (set_attr "mode" "V8SF")])
 

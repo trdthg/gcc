@@ -1,5 +1,5 @@
 /* Handle errors.
-   Copyright (C) 2000-2023 Free Software Foundation, Inc.
+   Copyright (C) 2000-2024 Free Software Foundation, Inc.
    Contributed by Andy Vaught & Niels Kristian Bech Jensen
 
 This file is part of GCC.
@@ -536,7 +536,8 @@ error_print (const char *type, const char *format0, va_list argp)
 {
   enum { TYPE_CURRENTLOC, TYPE_LOCUS, TYPE_INTEGER, TYPE_UINTEGER,
 	 TYPE_LONGINT, TYPE_ULONGINT, TYPE_LLONGINT, TYPE_ULLONGINT,
-	 TYPE_HWINT, TYPE_HWUINT, TYPE_CHAR, TYPE_STRING, NOTYPE };
+	 TYPE_HWINT, TYPE_HWUINT, TYPE_CHAR, TYPE_STRING, TYPE_SIZE,
+	 TYPE_SSIZE, TYPE_PTRDIFF, NOTYPE };
   struct
   {
     int type;
@@ -553,6 +554,9 @@ error_print (const char *type, const char *format0, va_list argp)
       unsigned HOST_WIDE_INT hwuintval;
       char charval;
       const char * stringval;
+      size_t sizeval;
+      ssize_t ssizeval;
+      ptrdiff_t ptrdiffval;
     } u;
   } arg[MAX_ARGS], spec[MAX_ARGS];
   /* spec is the array of specifiers, in the same order as they
@@ -662,6 +666,24 @@ error_print (const char *type, const char *format0, va_list argp)
 	      gcc_unreachable ();
 	    break;
 
+	  case 'z':
+	    c = *format++;
+	    if (c == 'u')
+	      arg[pos].type = TYPE_SIZE;
+	    else if (c == 'i' || c == 'd')
+	      arg[pos].type = TYPE_SSIZE;
+	    else
+	      gcc_unreachable ();
+	    break;
+
+	  case 't':
+	    c = *format++;
+	    if (c == 'u' || c == 'i' || c == 'd')
+	      arg[pos].type = TYPE_PTRDIFF;
+	    else
+	      gcc_unreachable ();
+	    break;
+
 	  case 'c':
 	    arg[pos].type = TYPE_CHAR;
 	    break;
@@ -740,6 +762,18 @@ error_print (const char *type, const char *format0, va_list argp)
 
 	  case TYPE_HWUINT:
 	    arg[pos].u.hwuintval = va_arg (argp, unsigned HOST_WIDE_INT);
+	    break;
+
+	  case TYPE_SSIZE:
+	    arg[pos].u.ssizeval = va_arg (argp, ssize_t);
+	    break;
+
+	  case TYPE_SIZE:
+	    arg[pos].u.sizeval = va_arg (argp, size_t);
+	    break;
+
+	  case TYPE_PTRDIFF:
+	    arg[pos].u.ptrdiffval = va_arg (argp, ptrdiff_t);
 	    break;
 
 	  case TYPE_CHAR:
@@ -839,6 +873,31 @@ error_print (const char *type, const char *format0, va_list argp)
 	  else
 	    error_hwint (spec[n++].u.hwuintval);
 	  break;
+
+	case 'z':
+	  format++;
+	  if (*format == 'u')
+	    error_uinteger (spec[n++].u.sizeval);
+	  else
+	    error_integer (spec[n++].u.ssizeval);
+	  break;
+
+	case 't':
+	  format++;
+	  if (*format == 'u')
+	    {
+	      unsigned long long a = spec[n++].u.ptrdiffval, m;
+#ifdef PTRDIFF_MAX
+	      m = PTRDIFF_MAX;
+#else
+	      m = INTTYPE_MAXIMUM (ptrdiff_t);
+#endif
+	      m = 2 * m + 1;
+	      error_uinteger (a & m);
+	    }
+	  else
+	    error_integer (spec[n++].u.ptrdiffval);
+	  break;
 	}
     }
 
@@ -865,10 +924,10 @@ static void
 gfc_clear_pp_buffer (output_buffer *this_buffer)
 {
   pretty_printer *pp = global_dc->printer;
-  output_buffer *tmp_buffer = pp->buffer;
-  pp->buffer = this_buffer;
+  output_buffer *tmp_buffer = pp_buffer (pp);
+  pp_buffer (pp) = this_buffer;
   pp_clear_output_area (pp);
-  pp->buffer = tmp_buffer;
+  pp_buffer (pp) = tmp_buffer;
   /* We need to reset last_location, otherwise we may skip caret lines
      when we actually give a diagnostic.  */
   global_dc->m_last_location = UNKNOWN_LOCATION;
@@ -905,13 +964,13 @@ gfc_warning (int opt, const char *gmsgid, va_list ap)
   rich_location rich_loc (line_table, UNKNOWN_LOCATION);
   bool fatal_errors = global_dc->m_fatal_errors;
   pretty_printer *pp = global_dc->printer;
-  output_buffer *tmp_buffer = pp->buffer;
+  output_buffer *tmp_buffer = pp_buffer (pp);
 
   gfc_clear_pp_buffer (pp_warning_buffer);
 
   if (buffered_p)
     {
-      pp->buffer = pp_warning_buffer;
+      pp_buffer (pp) = pp_warning_buffer;
       global_dc->m_fatal_errors = false;
       /* To prevent -fmax-errors= triggering.  */
       --werrorcount;
@@ -924,7 +983,7 @@ gfc_warning (int opt, const char *gmsgid, va_list ap)
 
   if (buffered_p)
     {
-      pp->buffer = tmp_buffer;
+      pp_buffer (pp) = tmp_buffer;
       global_dc->m_fatal_errors = fatal_errors;
 
       warningcount_buffered = 0;
@@ -1402,13 +1461,13 @@ gfc_warning_check (void)
   if (! gfc_output_buffer_empty_p (pp_warning_buffer))
     {
       pretty_printer *pp = global_dc->printer;
-      output_buffer *tmp_buffer = pp->buffer;
-      pp->buffer = pp_warning_buffer;
+      output_buffer *tmp_buffer = pp_buffer (pp);
+      pp_buffer (pp) = pp_warning_buffer;
       pp_really_flush (pp);
       warningcount += warningcount_buffered;
       werrorcount += werrorcount_buffered;
       gcc_assert (warningcount_buffered + werrorcount_buffered == 1);
-      pp->buffer = tmp_buffer;
+      pp_buffer (pp) = tmp_buffer;
       diagnostic_action_after_output (global_dc,
 				      warningcount_buffered
 				      ? DK_WARNING : DK_ERROR);
@@ -1443,7 +1502,7 @@ gfc_error_opt (int opt, const char *gmsgid, va_list ap)
   rich_location richloc (line_table, UNKNOWN_LOCATION);
   bool fatal_errors = global_dc->m_fatal_errors;
   pretty_printer *pp = global_dc->printer;
-  output_buffer *tmp_buffer = pp->buffer;
+  output_buffer *tmp_buffer = pp_buffer (pp);
 
   gfc_clear_pp_buffer (pp_error_buffer);
 
@@ -1453,7 +1512,7 @@ gfc_error_opt (int opt, const char *gmsgid, va_list ap)
 	 save abort_on_error and restore it below.  */
       saved_abort_on_error = global_dc->m_abort_on_error;
       global_dc->m_abort_on_error = false;
-      pp->buffer = pp_error_buffer;
+      pp_buffer (pp) = pp_error_buffer;
       global_dc->m_fatal_errors = false;
       /* To prevent -fmax-errors= triggering, we decrease it before
 	 report_diagnostic increases it.  */
@@ -1465,7 +1524,7 @@ gfc_error_opt (int opt, const char *gmsgid, va_list ap)
 
   if (buffered_p)
     {
-      pp->buffer = tmp_buffer;
+      pp_buffer (pp) = tmp_buffer;
       global_dc->m_fatal_errors = fatal_errors;
       global_dc->m_abort_on_error = saved_abort_on_error;
 
@@ -1550,12 +1609,12 @@ gfc_error_check (void)
     {
       error_buffer.flag = false;
       pretty_printer *pp = global_dc->printer;
-      output_buffer *tmp_buffer = pp->buffer;
-      pp->buffer = pp_error_buffer;
+      output_buffer *tmp_buffer = pp_buffer (pp);
+      pp_buffer (pp) = pp_error_buffer;
       pp_really_flush (pp);
       ++errorcount;
       gcc_assert (gfc_output_buffer_empty_p (pp_error_buffer));
-      pp->buffer = tmp_buffer;
+      pp_buffer (pp) = tmp_buffer;
       diagnostic_action_after_output (global_dc, DK_ERROR);
       diagnostic_check_max_errors (global_dc, true);
       return true;

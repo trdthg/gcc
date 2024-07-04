@@ -1,5 +1,5 @@
 /* Implements exception handling.
-   Copyright (C) 1989-2023 Free Software Foundation, Inc.
+   Copyright (C) 1989-2024 Free Software Foundation, Inc.
    Contributed by Mike Stump <mrs@cygnus.com>.
 
 This file is part of GCC.
@@ -2167,6 +2167,9 @@ expand_builtin_eh_return_data_regno (tree exp)
       return constm1_rtx;
     }
 
+  if (!tree_fits_uhwi_p (which))
+    return constm1_rtx;
+
   iwhich = tree_to_uhwi (which);
   iwhich = EH_RETURN_DATA_REGNO (iwhich);
   if (iwhich == INVALID_REGNUM)
@@ -3219,9 +3222,6 @@ output_one_function_exception_table (int section)
 void
 output_function_exception_table (int section)
 {
-  const char *fnname = get_fnname_from_decl (current_function_decl);
-  rtx personality = get_personality_function (current_function_decl);
-
   /* Not all functions need anything.  */
   if (!crtl->uses_eh_lsda
       || targetm_common.except_unwind_info (&global_options) == UI_NONE)
@@ -3230,6 +3230,9 @@ output_function_exception_table (int section)
   /* No need to emit any boilerplate stuff for the cold part.  */
   if (section == 1 && !crtl->eh.call_site_record_v[1])
     return;
+
+  const char *fnname = get_fnname_from_decl (current_function_decl);
+  rtx personality = get_personality_function (current_function_decl);
 
   if (personality)
     {

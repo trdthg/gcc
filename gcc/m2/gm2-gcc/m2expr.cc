@@ -1,6 +1,6 @@
 /* m2expr.cc provides an interface to GCC expression trees.
 
-Copyright (C) 2012-2023 Free Software Foundation, Inc.
+Copyright (C) 2012-2024 Free Software Foundation, Inc.
 Contributed by Gaius Mulley <gaius@glam.ac.uk>.
 
 This file is part of GNU Modula-2.
@@ -109,6 +109,14 @@ unsigned int
 m2expr_StringLength (tree string)
 {
   return TREE_STRING_LENGTH (string);
+}
+
+/* BuildCondIfExpression returns a tree containing (condition) ? (left) : right.  */
+
+tree
+m2expr_BuildCondIfExpression (tree condition, tree type, tree left, tree right)
+{
+  return fold_build3 (COND_EXPR, type, condition, left, right);
 }
 
 /* CheckAddressToCardinal if op is a pointer convert it to the ADDRESS type.  */

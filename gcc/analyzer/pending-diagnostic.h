@@ -1,5 +1,5 @@
 /* Classes for analyzer diagnostics.
-   Copyright (C) 2019-2023 Free Software Foundation, Inc.
+   Copyright (C) 2019-2024 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
 This file is part of GCC.
@@ -371,7 +371,7 @@ class pending_diagnostic
      of the called function.  */
   virtual void add_final_event (const state_machine *sm,
 				const exploded_node *enode,
-				const gimple *stmt,
+				const event_loc_info &loc_info,
 				tree var, state_machine::state_t state,
 				checker_path *emission_path);
 

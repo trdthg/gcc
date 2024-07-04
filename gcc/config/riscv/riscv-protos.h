@@ -1,5 +1,5 @@
 /* Definition of RISC-V target for GNU compiler.
-   Copyright (C) 2011-2023 Free Software Foundation, Inc.
+   Copyright (C) 2011-2024 Free Software Foundation, Inc.
    Contributed by Andrew Waterman (andrew@sifive.com).
    Based on MIPS target for GNU compiler.
 
@@ -34,9 +34,10 @@ enum riscv_symbol_type {
   SYMBOL_TLS,
   SYMBOL_TLS_LE,
   SYMBOL_TLS_IE,
-  SYMBOL_TLS_GD
+  SYMBOL_TLS_GD,
+  SYMBOL_TLSDESC,
 };
-#define NUM_SYMBOL_TYPES (SYMBOL_TLS_GD + 1)
+#define NUM_SYMBOL_TYPES (SYMBOL_TLSDESC + 1)
 
 /* Classifies an address.
 
@@ -102,6 +103,7 @@ struct riscv_address_info {
 };
 
 /* Routines implemented in riscv.cc.  */
+extern const char *riscv_asm_output_opcode (FILE *asm_out_file, const char *p);
 extern enum riscv_symbol_type riscv_classify_symbolic_expression (rtx);
 extern bool riscv_symbolic_constant_p (rtx, enum riscv_symbol_type *);
 extern int riscv_float_const_rtx_index_for_fli (rtx);
@@ -131,6 +133,8 @@ extern void riscv_asm_output_external (FILE *, const tree, const char *);
 extern bool
 riscv_zcmp_valid_stack_adj_bytes_p (HOST_WIDE_INT, int);
 extern void riscv_legitimize_poly_move (machine_mode, rtx, rtx, rtx);
+extern void riscv_expand_usadd (rtx, rtx, rtx);
+extern void riscv_expand_ussub (rtx, rtx, rtx);
 
 #ifdef RTX_CODE
 extern void riscv_expand_int_scc (rtx, enum rtx_code, rtx, rtx, bool *invert_ptr = 0);
@@ -163,6 +167,9 @@ extern bool riscv_shamt_matches_mask_p (int, HOST_WIDE_INT);
 extern void riscv_subword_address (rtx, rtx *, rtx *, rtx *, rtx *);
 extern void riscv_lshift_subword (machine_mode, rtx, rtx, rtx *);
 extern enum memmodel riscv_union_memmodels (enum memmodel, enum memmodel);
+extern bool riscv_reg_frame_related (rtx);
+extern void riscv_split_sum_of_two_s12 (HOST_WIDE_INT, HOST_WIDE_INT *,
+					HOST_WIDE_INT *);
 
 /* Routines implemented in riscv-c.cc.  */
 void riscv_cpu_cpp_builtins (cpp_reader *);
@@ -186,7 +193,9 @@ rtl_opt_pass * make_pass_avlprop (gcc::context *ctxt);
 rtl_opt_pass * make_pass_vsetvl (gcc::context *ctxt);
 
 /* Routines implemented in riscv-string.c.  */
+extern bool riscv_expand_block_compare (rtx, rtx, rtx, rtx);
 extern bool riscv_expand_block_move (rtx, rtx, rtx);
+extern bool riscv_expand_block_clear (rtx, rtx);
 
 /* Information about one CPU we know about.  */
 struct riscv_cpu_info {
@@ -216,6 +225,15 @@ struct common_vector_cost
   /* Gather/scatter vectorization cost.  */
   const int gather_load_cost;
   const int scatter_store_cost;
+
+  /* Segment load/store permute cost.  */
+  const int segment_permute_2;
+  const int segment_permute_3;
+  const int segment_permute_4;
+  const int segment_permute_5;
+  const int segment_permute_6;
+  const int segment_permute_7;
+  const int segment_permute_8;
 
   /* Cost of a vector-to-scalar operation.  */
   const int vec_to_scalar_cost;
@@ -250,6 +268,15 @@ struct scalable_vector_cost : common_vector_cost
      E.g. fold_left reduction cost, lanes load/store cost, ..., etc.  */
 };
 
+/* Additional costs for register copies.  Cost is for one register.  */
+struct regmove_vector_cost
+{
+  const int GR2VR;
+  const int FR2VR;
+  const int VR2GR;
+  const int VR2FR;
+};
+
 /* Cost for vector insn classes.  */
 struct cpu_vector_cost
 {
@@ -276,6 +303,9 @@ struct cpu_vector_cost
 
   /* Cost of an VLA modes operations.  */
   const scalable_vector_cost *vla;
+
+  /* Cost of vector register move operations.  */
+  const regmove_vector_cost *regmove;
 };
 
 /* Routines implemented in riscv-selftests.cc.  */
@@ -286,10 +316,9 @@ void riscv_run_selftests (void);
 #endif
 
 namespace riscv_vector {
-#define RVV_VLMAX gen_rtx_REG (Pmode, X0_REGNUM)
+#define RVV_VLMAX regno_reg_rtx[X0_REGNUM]
 #define RVV_VUNDEF(MODE)                                                       \
-  gen_rtx_UNSPEC (MODE, gen_rtvec (1, gen_rtx_REG (SImode, X0_REGNUM)),        \
-		  UNSPEC_VUNDEF)
+  gen_rtx_UNSPEC (MODE, gen_rtvec (1, RVV_VLMAX), UNSPEC_VUNDEF)
 
 /* These flags describe how to pass the operands to a rvv insn pattern.
    e.g.:
@@ -366,6 +395,12 @@ enum insn_flags : unsigned int
 
   /* Means INSN has FRM operand and the value is FRM_RNE.  */
   FRM_RNE_P = 1 << 19,
+
+  /* Means INSN has VXRM operand and the value is VXRM_RNU.  */
+  VXRM_RNU_P = 1 << 20,
+
+  /* Means INSN has VXRM operand and the value is VXRM_RDN.  */
+  VXRM_RDN_P = 1 << 21,
 };
 
 enum insn_type : unsigned int
@@ -426,6 +461,8 @@ enum insn_type : unsigned int
   BINARY_OP_TAMU = __MASK_OP_TAMU | BINARY_OP_P,
   BINARY_OP_TUMA = __MASK_OP_TUMA | BINARY_OP_P,
   BINARY_OP_FRM_DYN = BINARY_OP | FRM_DYN_P,
+  BINARY_OP_VXRM_RNU = BINARY_OP | VXRM_RNU_P,
+  BINARY_OP_VXRM_RDN = BINARY_OP | VXRM_RDN_P,
 
   /* Ternary operator. Always have real merge operand.  */
   TERNARY_OP = HAS_DEST_P | HAS_MASK_P | USE_ALL_TRUES_MASK_P | HAS_MERGE_P
@@ -526,6 +563,7 @@ enum avl_type
 };
 /* Routines implemented in riscv-vector-builtins.cc.  */
 void init_builtins (void);
+void reinit_builtins (void);
 const char *mangle_builtin_type (const_tree);
 tree lookup_vector_type_attribute (const_tree);
 bool builtin_type_p (const_tree);
@@ -540,7 +578,7 @@ gimple *gimple_fold_builtin (unsigned int, gimple_stmt_iterator *, gcall *);
 rtx expand_builtin (unsigned int, tree, rtx);
 bool check_builtin_call (location_t, vec<location_t>, unsigned int,
 			   tree, unsigned int, tree *);
-tree resolve_overloaded_builtin (unsigned int, vec<tree, va_gc> *);
+tree resolve_overloaded_builtin (location_t, unsigned int, tree, vec<tree, va_gc> *);
 bool const_vec_all_same_in_range_p (rtx, HOST_WIDE_INT, HOST_WIDE_INT);
 bool legitimize_move (rtx, rtx *);
 void emit_vlmax_vsetvl (machine_mode, rtx);
@@ -583,7 +621,7 @@ bool simm5_p (rtx);
 bool neg_simm5_p (rtx);
 #ifdef RTX_CODE
 bool has_vi_variant_p (rtx_code, rtx);
-void expand_vec_cmp (rtx, rtx_code, rtx, rtx);
+void expand_vec_cmp (rtx, rtx_code, rtx, rtx, rtx = nullptr, rtx = nullptr);
 bool expand_vec_cmp_float (rtx, rtx_code, rtx, rtx, bool);
 void expand_cond_len_unop (unsigned, rtx *);
 void expand_cond_len_binop (unsigned, rtx *);
@@ -599,6 +637,8 @@ void expand_vec_lrint (rtx, rtx, machine_mode, machine_mode, machine_mode);
 void expand_vec_lround (rtx, rtx, machine_mode, machine_mode, machine_mode);
 void expand_vec_lceil (rtx, rtx, machine_mode, machine_mode);
 void expand_vec_lfloor (rtx, rtx, machine_mode, machine_mode);
+void expand_vec_usadd (rtx, rtx, rtx, machine_mode);
+void expand_vec_ussub (rtx, rtx, rtx, machine_mode);
 #endif
 bool sew64_scalar_helper (rtx *, rtx *, rtx, machine_mode,
 			  bool, void (*)(rtx *, rtx), enum avl_type);
@@ -638,6 +678,8 @@ void expand_popcount (rtx *);
 void expand_rawmemchr (machine_mode, rtx, rtx, rtx, bool = false);
 bool expand_strcmp (rtx, rtx, rtx, rtx, unsigned HOST_WIDE_INT, bool);
 void emit_vec_extract (rtx, rtx, rtx);
+bool expand_vec_setmem (rtx, rtx, rtx);
+bool expand_vec_cmpmem (rtx, rtx, rtx, rtx);
 
 /* Rounding mode bitfield for fixed point VXRM.  */
 enum fixed_point_rounding_mode
@@ -687,6 +729,9 @@ bool imm_avl_p (machine_mode);
 bool can_be_broadcasted_p (rtx);
 bool gather_scatter_valid_offset_p (machine_mode);
 HOST_WIDE_INT estimated_poly_value (poly_int64, unsigned int);
+bool whole_reg_to_reg_move_p (rtx *, machine_mode, int);
+bool splat_to_scalar_move_p (rtx *);
+rtx get_fp_rounding_coefficient (machine_mode);
 }
 
 /* We classify builtin types into two classes:
@@ -717,6 +762,10 @@ extern void th_mempair_prepare_save_restore_operands (rtx[4], bool,
 						      int, HOST_WIDE_INT,
 						      int, HOST_WIDE_INT);
 extern void th_mempair_save_restore_regs (rtx[4], bool, machine_mode);
+extern unsigned int th_int_get_mask (unsigned int);
+extern unsigned int th_int_get_save_adjustment (void);
+extern rtx th_int_adjust_cfi_prologue (unsigned int);
+extern const char *th_asm_output_opcode (FILE *asm_out_file, const char *p);
 #ifdef RTX_CODE
 extern const char*
 th_mempair_output_move (rtx[4], bool, machine_mode, RTX_CODE);
@@ -736,6 +785,7 @@ extern bool
 riscv_option_valid_attribute_p (tree, tree, tree, int);
 extern void
 riscv_override_options_internal (struct gcc_options *);
+extern void riscv_option_override (void);
 
 struct riscv_tune_param;
 /* Information about one micro-arch we know about.  */
@@ -752,5 +802,13 @@ struct riscv_tune_info {
 
 const struct riscv_tune_info *
 riscv_parse_tune (const char *, bool);
+const cpu_vector_cost *get_vector_costs ();
+
+enum
+{
+  RISCV_MAJOR_VERSION_BASE = 1000000,
+  RISCV_MINOR_VERSION_BASE = 1000,
+  RISCV_REVISION_VERSION_BASE = 1,
+};
 
 #endif /* ! GCC_RISCV_PROTOS_H */

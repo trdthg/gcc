@@ -1,5 +1,5 @@
 /* Instruction scheduling pass.
-   Copyright (C) 1992-2023 Free Software Foundation, Inc.
+   Copyright (C) 1992-2024 Free Software Foundation, Inc.
    Contributed by Michael Tiemann (tiemann@cygnus.com) Enhanced by,
    and currently maintained by, Jim Wilson (wilson@cygnus.com)
 
@@ -2882,7 +2882,7 @@ dump_rgn_dependencies_dot (FILE *file)
   int bb;
   pretty_printer pp;
 
-  pp.buffer->stream = file;
+  pp.set_output_stream (file);
   pp_printf (&pp, "digraph SchedDG {\n");
 
   for (bb = 0; bb < current_nr_blocks; ++bb)

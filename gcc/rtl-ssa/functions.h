@@ -1,5 +1,5 @@
 // Function-related RTL SSA classes                                 -*- C++ -*-
-// Copyright (C) 2020-2023 Free Software Foundation, Inc.
+// Copyright (C) 2020-2024 Free Software Foundation, Inc.
 //
 // This file is part of GCC.
 //
@@ -72,6 +72,13 @@ public:
   set_info *create_set (obstack_watermark &watermark,
 			insn_info *insn,
 			resource_info resource);
+
+  // Create a temporary use of SET as part of a change to INSN.
+  // SET can be a pre-existing definition or one that is being created
+  // as part of the same change group.
+  use_info *create_use (obstack_watermark &watermark,
+			insn_info *insn,
+			set_info *set);
 
   // Create a temporary insn with code INSN_CODE and pattern PAT.
   insn_info *create_insn (obstack_watermark &watermark,
@@ -158,16 +165,22 @@ public:
 
   // If CHANGE doesn't already clobber REGNO, try to add such a clobber,
   // limiting the movement range in order to make the clobber valid.
-  // When determining whether REGNO is live, ignore accesses made by an
-  // instruction I if IGNORE (I) is true.  The caller then assumes the
-  // responsibility of ensuring that CHANGE and I are placed in a valid order.
+  // Use IGNORE to guide this process, where IGNORE is an object that
+  // provides the same interface as ignore_nothing.
+  //
+  // That is, when determining whether REGNO is live, ignore accesses made
+  // by an instruction I if IGNORE says that I should be ignored.  The caller
+  // then assumes the responsibility of ensuring that CHANGE and I are placed
+  // in a valid order.  Similarly, ignore live ranges associated with a
+  // definition of REGNO if IGNORE says that that definition should be
+  // ignored.
   //
   // Return true on success.  Leave CHANGE unmodified when returning false.
   //
   // WATERMARK is a watermark returned by new_change_attempt ().
-  template<typename IgnorePredicate>
+  template<typename IgnorePredicates>
   bool add_regno_clobber (obstack_watermark &watermark, insn_change &change,
-			  unsigned int regno, IgnorePredicate ignore);
+			  unsigned int regno, IgnorePredicates ignore);
 
   // Return true if change_insns will be able to perform the changes
   // described by CHANGES.
@@ -294,8 +307,10 @@ private:
   void process_uses_of_deleted_def (set_info *);
   insn_info *add_placeholder_after (insn_info *);
   void possibly_queue_changes (insn_change &);
-  void finalize_new_accesses (insn_change &, insn_info *);
-  void apply_changes_to_insn (insn_change &);
+  void finalize_new_accesses (insn_change &, insn_info *,
+			      hash_set<def_info *> &);
+  void apply_changes_to_insn (insn_change &,
+			      hash_set<def_info *> &);
 
   void init_function_data ();
   void calculate_potential_phi_regs (build_info &);

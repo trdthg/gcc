@@ -6,7 +6,7 @@
  *                                                                          *
  *                          C Implementation File                           *
  *                                                                          *
- *          Copyright (C) 1992-2023, Free Software Foundation, Inc.         *
+ *          Copyright (C) 1992-2024, Free Software Foundation, Inc.         *
  *                                                                          *
  * GNAT is free software;  you can  redistribute it  and/or modify it under *
  * terms of the  GNU General Public License as published  by the Free Soft- *
@@ -364,6 +364,26 @@ struct pad_type_hasher : ggc_cache_ptr_hash<pad_type_hash>
 
 static GTY ((cache)) hash_table<pad_type_hasher> *pad_type_hash_table;
 
+struct GTY((for_user)) sized_type_hash
+{
+  hashval_t hash;
+  tree type;
+};
+
+struct sized_type_hasher : ggc_cache_ptr_hash<sized_type_hash>
+{
+  static inline hashval_t hash (sized_type_hash *t) { return t->hash; }
+  static bool equal (sized_type_hash *a, sized_type_hash *b);
+
+  static int
+  keep_cache_entry (sized_type_hash *&t)
+  {
+    return ggc_marked_p (t->type);
+  }
+};
+
+static GTY ((cache)) hash_table<sized_type_hasher> *sized_type_hash_table;
+
 static tree merge_sizes (tree, tree, tree, bool, bool);
 static tree fold_bit_position (const_tree);
 static tree compute_related_constant (tree, tree);
@@ -421,6 +441,9 @@ init_gnat_utils (void)
 
   /* Initialize the hash table of padded types.  */
   pad_type_hash_table = hash_table<pad_type_hasher>::create_ggc (512);
+
+  /* Initialize the hash table of sized types.  */
+  sized_type_hash_table = hash_table<sized_type_hasher>::create_ggc (512);
 }
 
 /* Destroy data structures of the utils.cc module.  */
@@ -443,6 +466,10 @@ destroy_gnat_utils (void)
   /* Destroy the hash table of padded types.  */
   pad_type_hash_table->empty ();
   pad_type_hash_table = NULL;
+
+  /* Destroy the hash table of sized types.  */
+  sized_type_hash_table->empty ();
+  sized_type_hash_table = NULL;
 }
 
 /* GNAT_ENTITY is a GNAT tree node for an entity.  Associate GNU_DECL, a GCC
@@ -499,7 +526,7 @@ make_dummy_type (Entity_Id gnat_type)
   if (No (gnat_equiv))
     gnat_equiv = gnat_type;
 
-  /* If it there already a dummy type, use that one.  Else make one.  */
+  /* If there is already a dummy type, use that one.  Else make one.  */
   if (PRESENT_DUMMY_NODE (gnat_equiv))
     return GET_DUMMY_NODE (gnat_equiv);
 
@@ -1350,6 +1377,79 @@ type_unsigned_for_rm (tree type)
   return false;
 }
 
+/* Return true iff the sized types are equivalent.  */
+
+bool
+sized_type_hasher::equal (sized_type_hash *t1, sized_type_hash *t2)
+{
+  tree type1, type2;
+
+  if (t1->hash != t2->hash)
+    return false;
+
+  type1 = t1->type;
+  type2 = t2->type;
+
+  /* We consider sized types equivalent if they have the same name,
+     size, alignment, RM size, and biasing.  The range is not expected
+     to vary across different-sized versions of the same base
+     type.  */
+  bool res
+    = (TYPE_NAME (type1) == TYPE_NAME (type2)
+       && TYPE_SIZE (type1) == TYPE_SIZE (type2)
+       && TYPE_ALIGN (type1) == TYPE_ALIGN (type2)
+       && TYPE_RM_SIZE (type1) == TYPE_RM_SIZE (type2)
+       && (TYPE_BIASED_REPRESENTATION_P (type1)
+	   == TYPE_BIASED_REPRESENTATION_P (type2)));
+
+  gcc_assert (!res
+	      || (TYPE_RM_MIN_VALUE (type1) == TYPE_RM_MIN_VALUE (type2)
+		  && TYPE_RM_MAX_VALUE (type1) == TYPE_RM_MAX_VALUE (type2)));
+
+  return res;
+}
+
+/* Compute the hash value for the sized TYPE.  */
+
+static hashval_t
+hash_sized_type (tree type)
+{
+  hashval_t hashcode;
+
+  hashcode = iterative_hash_expr (TYPE_NAME (type), 0);
+  hashcode = iterative_hash_expr (TYPE_SIZE (type), hashcode);
+  hashcode = iterative_hash_hashval_t (TYPE_ALIGN (type), hashcode);
+  hashcode = iterative_hash_expr (TYPE_RM_SIZE (type), hashcode);
+  hashcode
+    = iterative_hash_hashval_t (TYPE_BIASED_REPRESENTATION_P (type), hashcode);
+
+  return hashcode;
+}
+
+/* Look up the sized TYPE in the hash table and return its canonical version
+   if it exists; otherwise, insert it into the hash table.  */
+
+static tree
+canonicalize_sized_type (tree type)
+{
+  const hashval_t hashcode = hash_sized_type (type);
+  struct sized_type_hash in, *h, **slot;
+
+  in.hash = hashcode;
+  in.type = type;
+  slot = sized_type_hash_table->find_slot_with_hash (&in, hashcode, INSERT);
+  h = *slot;
+  if (!h)
+    {
+      h = ggc_alloc<sized_type_hash> ();
+      h->hash = hashcode;
+      h->type = type;
+      *slot = h;
+    }
+
+  return h->type;
+}
+
 /* Given a type TYPE, return a new type whose size is appropriate for SIZE.
    If TYPE is the best type, return it.  Otherwise, make a new type.  We
    only support new integral and pointer types.  FOR_BIASED is true if
@@ -1383,6 +1483,11 @@ make_type_from_size (tree type, tree size_tree, bool for_biased)
       biased_p = (TREE_CODE (type) == INTEGER_TYPE
 		  && TYPE_BIASED_REPRESENTATION_P (type));
 
+      /* FOR_BIASED initially refers to the entity's representation,
+	 not to its type's.  The type we're to return must take both
+	 into account.  */
+      for_biased |= biased_p;
+
       /* Integer types with precision 0 are forbidden.  */
       if (size == 0)
 	size = 1;
@@ -1394,12 +1499,10 @@ make_type_from_size (tree type, tree size_tree, bool for_biased)
 	  || size > (Enable_128bit_Types ? 128 : LONG_LONG_TYPE_SIZE))
 	break;
 
-      biased_p |= for_biased;
-
       /* The type should be an unsigned type if the original type is unsigned
 	 or if the lower bound is constant and non-negative or if the type is
 	 biased, see E_Signed_Integer_Subtype case of gnat_to_gnu_entity.  */
-      if (type_unsigned_for_rm (type) || biased_p)
+      if (type_unsigned_for_rm (type) || for_biased)
 	new_type = make_unsigned_type (size);
       else
 	new_type = make_signed_type (size);
@@ -1409,9 +1512,12 @@ make_type_from_size (tree type, tree size_tree, bool for_biased)
       /* Copy the name to show that it's essentially the same type and
 	 not a subrange type.  */
       TYPE_NAME (new_type) = TYPE_NAME (type);
-      TYPE_BIASED_REPRESENTATION_P (new_type) = biased_p;
+      TYPE_BIASED_REPRESENTATION_P (new_type) = for_biased;
       SET_TYPE_RM_SIZE (new_type, bitsize_int (size));
-      return new_type;
+
+      return (TYPE_NAME (new_type)
+	      ? canonicalize_sized_type (new_type)
+	      : new_type);
 
     case RECORD_TYPE:
       /* Do something if this is a fat pointer, in which case we
@@ -1823,7 +1929,7 @@ set_reverse_storage_order_on_pad_type (tree type)
   return canonicalize_pad_type (type);
 }
 
-/* Relate the alias sets of GNU_NEW_TYPE and GNU_OLD_TYPE according to OP.
+/* Relate the alias sets of NEW_TYPE and OLD_TYPE according to OP.
    If this is a multi-dimensional array type, do this recursively.
 
    OP may be
@@ -1832,30 +1938,28 @@ set_reverse_storage_order_on_pad_type (tree type)
    - ALIAS_SET_SUBSET:   the new set is made a subset of the old one.  */
 
 void
-relate_alias_sets (tree gnu_new_type, tree gnu_old_type, enum alias_set_op op)
+relate_alias_sets (tree new_type, tree old_type, enum alias_set_op op)
 {
   /* Remove any padding from GNU_OLD_TYPE.  It doesn't matter in the case
      of a one-dimensional array, since the padding has the same alias set
      as the field type, but if it's a multi-dimensional array, we need to
      see the inner types.  */
-  while (TREE_CODE (gnu_old_type) == RECORD_TYPE
-	 && (TYPE_JUSTIFIED_MODULAR_P (gnu_old_type)
-	     || TYPE_PADDING_P (gnu_old_type)))
-    gnu_old_type = TREE_TYPE (TYPE_FIELDS (gnu_old_type));
+  while (TREE_CODE (old_type) == RECORD_TYPE
+	 && (TYPE_JUSTIFIED_MODULAR_P (old_type)
+	     || TYPE_PADDING_P (old_type)))
+    old_type = TREE_TYPE (TYPE_FIELDS (old_type));
 
   /* Unconstrained array types are deemed incomplete and would thus be given
      alias set 0.  Retrieve the underlying array type.  */
-  if (TREE_CODE (gnu_old_type) == UNCONSTRAINED_ARRAY_TYPE)
-    gnu_old_type
-      = TREE_TYPE (TREE_TYPE (TYPE_FIELDS (TREE_TYPE (gnu_old_type))));
-  if (TREE_CODE (gnu_new_type) == UNCONSTRAINED_ARRAY_TYPE)
-    gnu_new_type
-      = TREE_TYPE (TREE_TYPE (TYPE_FIELDS (TREE_TYPE (gnu_new_type))));
+  if (TREE_CODE (old_type) == UNCONSTRAINED_ARRAY_TYPE)
+    old_type = TREE_TYPE (TREE_TYPE (TYPE_FIELDS (TREE_TYPE (old_type))));
+  if (TREE_CODE (new_type) == UNCONSTRAINED_ARRAY_TYPE)
+    new_type = TREE_TYPE (TREE_TYPE (TYPE_FIELDS (TREE_TYPE (new_type))));
 
-  if (TREE_CODE (gnu_new_type) == ARRAY_TYPE
-      && TREE_CODE (TREE_TYPE (gnu_new_type)) == ARRAY_TYPE
-      && TYPE_MULTI_ARRAY_P (TREE_TYPE (gnu_new_type)))
-    relate_alias_sets (TREE_TYPE (gnu_new_type), TREE_TYPE (gnu_old_type), op);
+  if (TREE_CODE (new_type) == ARRAY_TYPE
+      && TREE_CODE (TREE_TYPE (new_type)) == ARRAY_TYPE
+      && TYPE_MULTI_ARRAY_P (TREE_TYPE (new_type)))
+    relate_alias_sets (TREE_TYPE (new_type), TREE_TYPE (old_type), op);
 
   switch (op)
     {
@@ -1864,19 +1968,23 @@ relate_alias_sets (tree gnu_new_type, tree gnu_old_type, enum alias_set_op op)
 	 aliasing settings because this can break the aliasing relationship
 	 between the array type and its element type.  */
       if (flag_checking || flag_strict_aliasing)
-	gcc_assert (!(TREE_CODE (gnu_new_type) == ARRAY_TYPE
-		      && TREE_CODE (gnu_old_type) == ARRAY_TYPE
-		      && TYPE_NONALIASED_COMPONENT (gnu_new_type)
-			 != TYPE_NONALIASED_COMPONENT (gnu_old_type)));
+	gcc_assert (!(TREE_CODE (new_type) == ARRAY_TYPE
+		      && TREE_CODE (old_type) == ARRAY_TYPE
+		      && TYPE_NONALIASED_COMPONENT (new_type)
+			 != TYPE_NONALIASED_COMPONENT (old_type)));
 
-      TYPE_ALIAS_SET (gnu_new_type) = get_alias_set (gnu_old_type);
+      /* The alias set is a property of the TYPE_CANONICAL if it exists.  */
+      if (TYPE_STRUCTURAL_EQUALITY_P (new_type))
+	TYPE_ALIAS_SET (new_type) = get_alias_set (old_type);
+      else
+	TYPE_ALIAS_SET (TYPE_CANONICAL (new_type)) = get_alias_set (old_type);
       break;
 
     case ALIAS_SET_SUBSET:
     case ALIAS_SET_SUPERSET:
       {
-	alias_set_type old_set = get_alias_set (gnu_old_type);
-	alias_set_type new_set = get_alias_set (gnu_new_type);
+	alias_set_type old_set = get_alias_set (old_type);
+	alias_set_type new_set = get_alias_set (new_type);
 
 	/* Do nothing if the alias sets conflict.  This ensures that we
 	   never call record_alias_subset several times for the same pair
@@ -1895,7 +2003,7 @@ relate_alias_sets (tree gnu_new_type, tree gnu_old_type, enum alias_set_op op)
       gcc_unreachable ();
     }
 
-  record_component_aliases (gnu_new_type);
+  record_component_aliases (new_type);
 }
 
 /* Record TYPE as a builtin type for Ada.  NAME is the name of the type.
@@ -1998,6 +2106,21 @@ finish_fat_pointer_type (tree record_type, tree field_list)
      PLACEHOLDER_EXPRs are referenced only indirectly, this isn't a pointer
      type but the representation of the unconstrained array.  */
   TYPE_CONTAINS_PLACEHOLDER_INTERNAL (record_type) = 2;
+}
+
+/* Clear DECL_BIT_FIELD flag and associated markers on FIELD, which is a field
+   of aggregate type TYPE.  */
+
+static void
+clear_decl_bit_field (tree field, tree type)
+{
+  DECL_BIT_FIELD (field) = 0;
+  DECL_BIT_FIELD_TYPE (field) = NULL_TREE;
+
+  /* DECL_BIT_FIELD_REPRESENTATIVE is not defined for QUAL_UNION_TYPE since
+     it uses the same slot as DECL_QUALIFIER.  */
+  if (TREE_CODE (type) != QUAL_UNION_TYPE)
+    DECL_BIT_FIELD_REPRESENTATIVE (field) = NULL_TREE;
 }
 
 /* Given a record type RECORD_TYPE and a list of FIELD_DECL nodes FIELD_LIST,
@@ -2110,7 +2233,7 @@ finish_record_type (tree record_type, tree field_list, int rep_level,
 	      if (TYPE_ALIGN (record_type) >= align)
 		{
 		  SET_DECL_ALIGN (field, MAX (DECL_ALIGN (field), align));
-		  DECL_BIT_FIELD (field) = 0;
+		  clear_decl_bit_field (field, record_type);
 		}
 	      else if (!had_align
 		       && rep_level == 0
@@ -2120,7 +2243,7 @@ finish_record_type (tree record_type, tree field_list, int rep_level,
 		{
 		  SET_TYPE_ALIGN (record_type, align);
 		  SET_DECL_ALIGN (field, MAX (DECL_ALIGN (field), align));
-		  DECL_BIT_FIELD (field) = 0;
+		  clear_decl_bit_field (field, record_type);
 		}
 	    }
 
@@ -2128,7 +2251,7 @@ finish_record_type (tree record_type, tree field_list, int rep_level,
 	  if (!STRICT_ALIGNMENT
 	      && DECL_BIT_FIELD (field)
 	      && value_factor_p (pos, BITS_PER_UNIT))
-	    DECL_BIT_FIELD (field) = 0;
+	    clear_decl_bit_field (field, record_type);
 	}
 
       /* Clear DECL_BIT_FIELD_TYPE for a variant part at offset 0, it's simply
@@ -2451,10 +2574,7 @@ rest_of_record_type_compilation (tree record_type)
 	     avoid generating useless attributes for the field in DWARF.  */
 	  if (DECL_SIZE (old_field) == TYPE_SIZE (field_type)
 	      && value_factor_p (pos, BITS_PER_UNIT))
-	    {
-	      DECL_BIT_FIELD (new_field) = 0;
-	      DECL_BIT_FIELD_TYPE (new_field) = NULL_TREE;
-	    }
+	    clear_decl_bit_field (new_field, new_record_type);
 	  DECL_CHAIN (new_field) = TYPE_FIELDS (new_record_type);
 	  TYPE_FIELDS (new_record_type) = new_field;
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /* Subroutines used for code generation on IBM RS/6000.
-   Copyright (C) 1991-2023 Free Software Foundation, Inc.
+   Copyright (C) 1991-2024 Free Software Foundation, Inc.
    Contributed by Richard Kenner (kenner@vlsi1.ultra.nyu.edu)
 
    This file is part of GCC.
@@ -72,6 +72,8 @@
 #include "context.h"
 #include "tree-pass.h"
 #include "symbol-summary.h"
+#include "sreal.h"
+#include "ipa-cp.h"
 #include "ipa-prop.h"
 #include "ipa-fnsummary.h"
 #include "except.h"
@@ -1705,6 +1707,9 @@ static const scoped_attribute_specs *const rs6000_attribute_table[] =
 #undef TARGET_C_MODE_FOR_SUFFIX
 #define TARGET_C_MODE_FOR_SUFFIX rs6000_c_mode_for_suffix
 
+#undef TARGET_C_MODE_FOR_FLOATING_TYPE
+#define TARGET_C_MODE_FOR_FLOATING_TYPE rs6000_c_mode_for_floating_type
+
 #undef TARGET_INVALID_BINARY_OP
 #define TARGET_INVALID_BINARY_OP rs6000_invalid_binary_op
 
@@ -1773,6 +1778,9 @@ static const scoped_attribute_specs *const rs6000_attribute_table[] =
 
 #undef TARGET_CONST_ANCHOR
 #define TARGET_CONST_ANCHOR 0x8000
+
+#undef TARGET_OVERLAP_OP_BY_PIECES_P
+#define TARGET_OVERLAP_OP_BY_PIECES_P hook_bool_void_true
 
 
 
@@ -3426,6 +3434,14 @@ rs6000_override_options_after_change (void)
   /* If we are inserting ROP-protect instructions, disable shrink wrap.  */
   if (rs6000_rop_protect)
     flag_shrink_wrap = 0;
+
+  /* One of the late-combine passes runs after register allocation
+     and can match define_insn_and_splits that were previously used
+     only before register allocation.  Some of those define_insn_and_splits
+     use gen_reg_rtx unconditionally.  Disable late-combine by default
+     until the define_insn_and_splits are fixed.  */
+  if (!OPTION_SET_P (flag_late_combine_instructions))
+    flag_late_combine_instructions = 0;
 }
 
 #ifdef TARGET_USES_LINUX64_OPT
@@ -3805,11 +3821,10 @@ rs6000_option_override_internal (bool global_init_p)
 		 "-mmultiple");
     }
 
-  /* If little-endian, default to -mstrict-align on older processors.
-     Testing for direct_move matches power8 and later.  */
+  /* If little-endian, default to -mstrict-align on older processors.  */
   if (!BYTES_BIG_ENDIAN
       && !(processor_target_table[tune_index].target_enable
-	   & OPTION_MASK_DIRECT_MOVE))
+	   & OPTION_MASK_POWER8))
     rs6000_isa_flags |= ~rs6000_isa_flags_explicit & OPTION_MASK_STRICT_ALIGN;
 
   /* Add some warnings for VSX.  */
@@ -3851,8 +3866,7 @@ rs6000_option_override_internal (bool global_init_p)
       && (rs6000_isa_flags_explicit & (OPTION_MASK_SOFT_FLOAT
 				       | OPTION_MASK_ALTIVEC
 				       | OPTION_MASK_VSX)) != 0)
-    rs6000_isa_flags &= ~((OPTION_MASK_P8_VECTOR | OPTION_MASK_CRYPTO
-			   | OPTION_MASK_DIRECT_MOVE)
+    rs6000_isa_flags &= ~((OPTION_MASK_P8_VECTOR | OPTION_MASK_CRYPTO)
 		         & ~rs6000_isa_flags_explicit);
 
   if (TARGET_DEBUG_REG || TARGET_DEBUG_TARGET)
@@ -3864,8 +3878,8 @@ rs6000_option_override_internal (bool global_init_p)
     dwarf_offset_size = POINTER_SIZE_UNITS;
 #endif
 
-  /* Handle explicit -mno-{altivec,vsx,power8-vector,power9-vector} and turn
-     off all of the options that depend on those flags.  */
+  /* Handle explicit -mno-{altivec,vsx} and turn off all of
+     the options that depend on those flags.  */
   ignore_masks = rs6000_disable_incompatible_switches ();
 
   /* For the newer switches (vsx, dfp, etc.) set some of the older options,
@@ -3896,7 +3910,7 @@ rs6000_option_override_internal (bool global_init_p)
       else
 	rs6000_isa_flags |= ISA_3_0_MASKS_SERVER;
     }
-  else if (TARGET_P8_VECTOR || TARGET_DIRECT_MOVE || TARGET_CRYPTO)
+  else if (TARGET_P8_VECTOR || TARGET_POWER8 || TARGET_CRYPTO)
     rs6000_isa_flags |= (ISA_2_7_MASKS_SERVER & ~ignore_masks);
   else if (TARGET_VSX)
     rs6000_isa_flags |= (ISA_2_6_MASKS_SERVER & ~ignore_masks);
@@ -3937,39 +3951,12 @@ rs6000_option_override_internal (bool global_init_p)
       rs6000_isa_flags &= ~OPTION_MASK_FPRND;
     }
 
-  if (TARGET_DIRECT_MOVE && !TARGET_VSX)
-    {
-      if (rs6000_isa_flags_explicit & OPTION_MASK_DIRECT_MOVE)
-	error ("%qs requires %qs", "-mdirect-move", "-mvsx");
-      rs6000_isa_flags &= ~OPTION_MASK_DIRECT_MOVE;
-    }
-
-  if (TARGET_P8_VECTOR && !TARGET_ALTIVEC)
-    {
-      if (rs6000_isa_flags_explicit & OPTION_MASK_P8_VECTOR)
-	error ("%qs requires %qs", "-mpower8-vector", "-maltivec");
-      rs6000_isa_flags &= ~OPTION_MASK_P8_VECTOR;
-    }
+  /* Assert !TARGET_VSX if !TARGET_ALTIVEC and make some adjustments
+     based on either !TARGET_VSX or !TARGET_ALTIVEC concise.  */
+  gcc_assert (TARGET_ALTIVEC || !TARGET_VSX);
 
   if (TARGET_P8_VECTOR && !TARGET_VSX)
-    {
-      if ((rs6000_isa_flags_explicit & OPTION_MASK_P8_VECTOR)
-	  && (rs6000_isa_flags_explicit & OPTION_MASK_VSX))
-	error ("%qs requires %qs", "-mpower8-vector", "-mvsx");
-      else if ((rs6000_isa_flags_explicit & OPTION_MASK_P8_VECTOR) == 0)
-	{
-	  rs6000_isa_flags &= ~OPTION_MASK_P8_VECTOR;
-	  if (rs6000_isa_flags_explicit & OPTION_MASK_VSX)
-	    rs6000_isa_flags_explicit |= OPTION_MASK_P8_VECTOR;
-	}
-      else
-	{
-	  /* OPTION_MASK_P8_VECTOR is explicit, and OPTION_MASK_VSX is
-	     not explicit.  */
-	  rs6000_isa_flags |= OPTION_MASK_VSX;
-	  rs6000_isa_flags_explicit |= OPTION_MASK_VSX;
-	}
-    }
+    rs6000_isa_flags &= ~OPTION_MASK_P8_VECTOR;
 
   if (TARGET_DFP && !TARGET_HARD_FLOAT)
     {
@@ -4056,28 +4043,7 @@ rs6000_option_override_internal (bool global_init_p)
 
   /* ISA 3.0 vector instructions include ISA 2.07.  */
   if (TARGET_P9_VECTOR && !TARGET_P8_VECTOR)
-    {
-      /* We prefer to not mention undocumented options in
-	 error messages.  However, if users have managed to select
-	 power9-vector without selecting power8-vector, they
-	 already know about undocumented flags.  */
-      if ((rs6000_isa_flags_explicit & OPTION_MASK_P9_VECTOR) &&
-	  (rs6000_isa_flags_explicit & OPTION_MASK_P8_VECTOR))
-	error ("%qs requires %qs", "-mpower9-vector", "-mpower8-vector");
-      else if ((rs6000_isa_flags_explicit & OPTION_MASK_P9_VECTOR) == 0)
-	{
-	  rs6000_isa_flags &= ~OPTION_MASK_P9_VECTOR;
-	  if (rs6000_isa_flags_explicit & OPTION_MASK_P8_VECTOR)
-	    rs6000_isa_flags_explicit |= OPTION_MASK_P9_VECTOR;
-	}
-      else
-	{
-	  /* OPTION_MASK_P9_VECTOR is explicit and
-	     OPTION_MASK_P8_VECTOR is not explicit.  */
-	  rs6000_isa_flags |= OPTION_MASK_P8_VECTOR;
-	  rs6000_isa_flags_explicit |= OPTION_MASK_P8_VECTOR;
-	}
-    }
+    rs6000_isa_flags &= ~OPTION_MASK_P9_VECTOR;
 
   /* Set -mallow-movmisalign to explicitly on if we have full ISA 2.07
      support. If we only have ISA 2.06 support, and the user did not specify
@@ -15329,7 +15295,7 @@ rs6000_generate_compare (rtx cmp, machine_mode mode)
   rtx op0 = XEXP (cmp, 0);
   rtx op1 = XEXP (cmp, 1);
 
-  if (!TARGET_FLOAT128_HW && FLOAT128_VECTOR_P (mode))
+  if (!TARGET_FLOAT128_HW && FLOAT128_IEEE_P (mode))
     comp_mode = CCmode;
   else if (FLOAT_MODE_P (mode))
     comp_mode = CCFPmode;
@@ -15361,7 +15327,7 @@ rs6000_generate_compare (rtx cmp, machine_mode mode)
 
   /* IEEE 128-bit support in VSX registers when we do not have hardware
      support.  */
-  if (!TARGET_FLOAT128_HW && FLOAT128_VECTOR_P (mode))
+  if (!TARGET_FLOAT128_HW && FLOAT128_IEEE_P (mode))
     {
       rtx libfunc = NULL_RTX;
       bool check_nan = false;
@@ -21357,6 +21323,7 @@ rs6000_elf_declare_function_name (FILE *file, const char *name, tree decl)
       ASM_DECLARE_RESULT (file, DECL_RESULT (decl));
       rs6000_output_function_entry (file, name);
       fputs (":\n", file);
+      assemble_function_label_final ();
       return;
     }
 
@@ -21419,7 +21386,7 @@ rs6000_elf_declare_function_name (FILE *file, const char *name, tree decl)
       fputs ("\t.long 0\n", file);
       fprintf (file, "\t.previous\n");
     }
-  ASM_OUTPUT_LABEL (file, name);
+  ASM_OUTPUT_FUNCTION_LABEL (file, name, decl);
 }
 
 static void rs6000_elf_file_end (void) ATTRIBUTE_UNUSED;
@@ -21992,7 +21959,7 @@ rs6000_xcoff_declare_function_name (FILE *file, const char *name, tree decl)
   assemble_name (file, buffer);
   fputs (TARGET_32BIT ? "\n" : ",3\n", file);
 
-  ASM_OUTPUT_LABEL (file, buffer);
+  ASM_OUTPUT_FUNCTION_LABEL (file, buffer, decl);
 
   symtab_node::get (decl)->call_for_symbol_and_aliases (rs6000_declare_alias,
 							&data, true);
@@ -23486,28 +23453,28 @@ altivec_expand_vec_perm_const (rtx target, rtx op0, rtx op1,
      CODE_FOR_altivec_vpkuwum_direct,
      {2, 3, 6, 7, 10, 11, 14, 15, 18, 19, 22, 23, 26, 27, 30, 31}},
     {OPTION_MASK_ALTIVEC,
-     BYTES_BIG_ENDIAN ? CODE_FOR_altivec_vmrghb_direct
-		      : CODE_FOR_altivec_vmrglb_direct,
+     BYTES_BIG_ENDIAN ? CODE_FOR_altivec_vmrghb_direct_be
+		      : CODE_FOR_altivec_vmrglb_direct_le,
      {0, 16, 1, 17, 2, 18, 3, 19, 4, 20, 5, 21, 6, 22, 7, 23}},
     {OPTION_MASK_ALTIVEC,
-     BYTES_BIG_ENDIAN ? CODE_FOR_altivec_vmrghh_direct
-		      : CODE_FOR_altivec_vmrglh_direct,
+     BYTES_BIG_ENDIAN ? CODE_FOR_altivec_vmrghh_direct_be
+		      : CODE_FOR_altivec_vmrglh_direct_le,
      {0, 1, 16, 17, 2, 3, 18, 19, 4, 5, 20, 21, 6, 7, 22, 23}},
     {OPTION_MASK_ALTIVEC,
-     BYTES_BIG_ENDIAN ? CODE_FOR_altivec_vmrghw_direct_v4si
-		      : CODE_FOR_altivec_vmrglw_direct_v4si,
+     BYTES_BIG_ENDIAN ? CODE_FOR_altivec_vmrghw_direct_v4si_be
+		      : CODE_FOR_altivec_vmrglw_direct_v4si_le,
      {0, 1, 2, 3, 16, 17, 18, 19, 4, 5, 6, 7, 20, 21, 22, 23}},
     {OPTION_MASK_ALTIVEC,
-     BYTES_BIG_ENDIAN ? CODE_FOR_altivec_vmrglb_direct
-		      : CODE_FOR_altivec_vmrghb_direct,
+     BYTES_BIG_ENDIAN ? CODE_FOR_altivec_vmrglb_direct_be
+		      : CODE_FOR_altivec_vmrghb_direct_le,
      {8, 24, 9, 25, 10, 26, 11, 27, 12, 28, 13, 29, 14, 30, 15, 31}},
     {OPTION_MASK_ALTIVEC,
-     BYTES_BIG_ENDIAN ? CODE_FOR_altivec_vmrglh_direct
-		      : CODE_FOR_altivec_vmrghh_direct,
+     BYTES_BIG_ENDIAN ? CODE_FOR_altivec_vmrglh_direct_be
+		      : CODE_FOR_altivec_vmrghh_direct_le,
      {8, 9, 24, 25, 10, 11, 26, 27, 12, 13, 28, 29, 14, 15, 30, 31}},
     {OPTION_MASK_ALTIVEC,
-     BYTES_BIG_ENDIAN ? CODE_FOR_altivec_vmrglw_direct_v4si
-		      : CODE_FOR_altivec_vmrghw_direct_v4si,
+     BYTES_BIG_ENDIAN ? CODE_FOR_altivec_vmrglw_direct_v4si_be
+		      : CODE_FOR_altivec_vmrghw_direct_v4si_le,
      {8, 9, 10, 11, 24, 25, 26, 27, 12, 13, 14, 15, 28, 29, 30, 31}},
     {OPTION_MASK_P8_VECTOR,
      BYTES_BIG_ENDIAN ? CODE_FOR_p8_vmrgew_v4sf_direct
@@ -24409,6 +24376,19 @@ rs6000_c_mode_for_suffix (char suffix)
   return VOIDmode;
 }
 
+/* Implement TARGET_C_MODE_FOR_FLOATING_TYPE.  Return TFmode for
+   TI_LONG_DOUBLE_TYPE which is for long double type, go with the default
+   one for the others.  */
+
+static machine_mode
+rs6000_c_mode_for_floating_type (enum tree_index ti)
+{
+  if (ti == TI_LONG_DOUBLE_TYPE)
+    return rs6000_long_double_type_size == FLOAT_PRECISION_TFmode ? TFmode
+								  : DFmode;
+  return default_mode_for_floating_type (ti);
+}
+
 /* Target hook for invalid_arg_for_unprototyped_fn. */
 static const char *
 invalid_arg_for_unprototyped_fn (const_tree typelist, const_tree funcdecl, const_tree val)
@@ -24468,7 +24448,7 @@ static struct rs6000_opt_mask const rs6000_opt_masks[] =
 								false, true  },
   { "cmpb",			OPTION_MASK_CMPB,		false, true  },
   { "crypto",			OPTION_MASK_CRYPTO,		false, true  },
-  { "direct-move",		OPTION_MASK_DIRECT_MOVE,	false, true  },
+  { "direct-move",		0,				false, true  },
   { "dlmzb",			OPTION_MASK_DLMZB,		false, true  },
   { "efficient-unaligned-vsx",	OPTION_MASK_EFFICIENT_UNALIGNED_VSX,
 								false, true  },
@@ -25187,12 +25167,6 @@ rs6000_print_isa_options (FILE *file, int indent, const char *string,
    2.07, and 3.0 options that relate to the vector unit (-mdirect-move,
    -mupper-regs-df, etc.).
 
-   If the user used -mno-power8-vector, we need to turn off all of the implicit
-   ISA 2.07 and 3.0 options that relate to the vector unit.
-
-   If the user used -mno-power9-vector, we need to turn off all of the implicit
-   ISA 3.0 options that relate to the vector unit.
-
    This function does not handle explicit options such as the user specifying
    -mdirect-move.  These are handled in rs6000_option_override_internal, and
    the appropriate error is given if needed.
@@ -25211,8 +25185,6 @@ rs6000_disable_incompatible_switches (void)
     const HOST_WIDE_INT dep_flags;	/* flags that depend on this option.  */
     const char *const name;		/* name of the switch.  */
   } flags[] = {
-    { OPTION_MASK_P9_VECTOR,	OTHER_P9_VECTOR_MASKS,	"power9-vector"	},
-    { OPTION_MASK_P8_VECTOR,	OTHER_P8_VECTOR_MASKS,	"power8-vector"	},
     { OPTION_MASK_VSX,		OTHER_VSX_VECTOR_MASKS,	"vsx"		},
     { OPTION_MASK_ALTIVEC,	OTHER_ALTIVEC_MASKS,	"altivec"	},
   };

@@ -6,7 +6,7 @@
 --                                                                          --
 --                                 S p e c                                  --
 --                                                                          --
---          Copyright (C) 1992-2023, Free Software Foundation, Inc.         --
+--          Copyright (C) 1992-2024, Free Software Foundation, Inc.         --
 --                                                                          --
 -- GNAT is free software;  you can  redistribute it  and/or modify it under --
 -- terms of the  GNU General Public License as published  by the Free Soft- --
@@ -980,7 +980,7 @@ package Checks is
 private
 
    type Check_Result is array (Positive range 1 .. 2) of Node_Id;
-   --  There are two cases for the result returned by Range_Check:
+   --  There are two cases for the result returned by Get_Range_Checks:
    --
    --    For the static case the result is one or two nodes that should cause
    --    a Constraint_Error. Typically these will include Expr itself or the

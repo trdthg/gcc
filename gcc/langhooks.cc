@@ -1,5 +1,5 @@
 /* Default language-specific hooks.
-   Copyright (C) 2001-2023 Free Software Foundation, Inc.
+   Copyright (C) 2001-2024 Free Software Foundation, Inc.
    Contributed by Alexandre Oliva  <aoliva@redhat.com>
 
 This file is part of GCC.
@@ -466,8 +466,7 @@ lhd_print_error_function (diagnostic_context *context, const char *file,
 
       diagnostic_set_last_function (context, diagnostic);
       pp_newline_and_flush (context->printer);
-      context->printer->prefix = old_prefix;
-      free ((char*) new_prefix);
+      context->printer->set_prefix (old_prefix);
     }
 }
 

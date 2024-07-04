@@ -6,7 +6,7 @@
  *                                                                          *
  *                          C Implementation File                           *
  *                                                                          *
- *          Copyright (C) 1992-2023, Free Software Foundation, Inc.         *
+ *          Copyright (C) 1992-2024, Free Software Foundation, Inc.         *
  *                                                                          *
  * GNAT is free software;  you can  redistribute it  and/or modify it under *
  * terms of the  GNU General Public License as published  by the Free Soft- *
@@ -241,6 +241,13 @@ UINT __gnat_current_ccs_encoding;
 #include <signal.h>
 #undef DIR_SEPARATOR
 #define DIR_SEPARATOR '\\'
+
+#ifdef STANDALONE
+#undef PATH_SEPARATOR
+#define PATH_SEPARATOR ';'
+#undef HOST_EXECUTABLE_SUFFIX
+#define HOST_EXECUTABLE_SUFFIX ".exe"
+#endif
 
 #else
 #include <signal.h>

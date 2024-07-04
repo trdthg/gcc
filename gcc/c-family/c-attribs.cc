@@ -1,5 +1,5 @@
 /* C-family attributes handling.
-   Copyright (C) 1992-2023 Free Software Foundation, Inc.
+   Copyright (C) 1992-2024 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -105,6 +105,8 @@ static tree handle_warn_if_not_aligned_attribute (tree *, tree, tree,
 						  int, bool *);
 static tree handle_strict_flex_array_attribute (tree *, tree, tree,
 						 int, bool *);
+static tree handle_counted_by_attribute (tree *, tree, tree,
+					   int, bool *);
 static tree handle_weak_attribute (tree *, tree, tree, int, bool *) ;
 static tree handle_noplt_attribute (tree *, tree, tree, int, bool *) ;
 static tree handle_alias_ifunc_attribute (bool, tree *, tree, tree, bool *);
@@ -412,6 +414,8 @@ const struct attribute_spec c_common_gnu_attributes[] =
 			      handle_warn_if_not_aligned_attribute, NULL },
   { "strict_flex_array",      1, 1, true, false, false, false,
 			      handle_strict_flex_array_attribute, NULL },
+  { "counted_by",	      1, 1, true, false, false, false,
+			      handle_counted_by_attribute, NULL },
   { "weak",                   0, 0, true,  false, false, false,
 			      handle_weak_attribute, NULL },
   { "noplt",                   0, 0, true,  false, false, false,
@@ -659,7 +663,8 @@ attribute_takes_identifier_p (const_tree attr_id)
   else if (!strcmp ("mode", spec->name)
 	   || !strcmp ("format", spec->name)
 	   || !strcmp ("cleanup", spec->name)
-	   || !strcmp ("access", spec->name))
+	   || !strcmp ("access", spec->name)
+	   || !strcmp ("counted_by", spec->name))
     return true;
   else
     return targetm.attribute_takes_identifier_p (attr_id);
@@ -1074,6 +1079,7 @@ handle_hardbool_attribute (tree *node, tree name, tree args,
 
   TREE_SET_CODE (*node, ENUMERAL_TYPE);
   ENUM_UNDERLYING_TYPE (*node) = orig;
+  TYPE_CANONICAL (*node) = TYPE_CANONICAL (orig);
 
   tree false_value;
   if (args)
@@ -2806,6 +2812,67 @@ handle_strict_flex_array_attribute (tree *node, tree name,
   return NULL_TREE;
 }
 
+/* Handle a "counted_by" attribute; arguments as in
+   struct attribute_spec.handler.  */
+
+static tree
+handle_counted_by_attribute (tree *node, tree name,
+			     tree args, int ARG_UNUSED (flags),
+			     bool *no_add_attrs)
+{
+  tree decl = *node;
+  tree argval = TREE_VALUE (args);
+  tree old_counted_by = lookup_attribute ("counted_by", DECL_ATTRIBUTES (decl));
+
+  /* This attribute only applies to field decls of a structure.  */
+  if (TREE_CODE (decl) != FIELD_DECL)
+    {
+      error_at (DECL_SOURCE_LOCATION (decl),
+		"%qE attribute is not allowed for a non-field"
+		" declaration %q+D", name, decl);
+      *no_add_attrs = true;
+    }
+  /* This attribute only applies to field with array type.  */
+  else if (TREE_CODE (TREE_TYPE (decl)) != ARRAY_TYPE)
+    {
+      error_at (DECL_SOURCE_LOCATION (decl),
+		"%qE attribute is not allowed for a non-array field",
+		name);
+      *no_add_attrs = true;
+    }
+  /* This attribute only applies to a C99 flexible array member type.  */
+  else if (! c_flexible_array_member_type_p (TREE_TYPE (decl)))
+    {
+      error_at (DECL_SOURCE_LOCATION (decl),
+		"%qE attribute is not allowed for a non-flexible"
+		" array member field", name);
+      *no_add_attrs = true;
+    }
+  /* The argument should be an identifier.  */
+  else if (TREE_CODE (argval) != IDENTIFIER_NODE)
+    {
+      error_at (DECL_SOURCE_LOCATION (decl),
+		"%<counted_by%> argument is not an identifier");
+      *no_add_attrs = true;
+    }
+  /* Issue error when there is a counted_by attribute with a different
+     field as the argument for the same flexible array member field.  */
+  else if (old_counted_by != NULL_TREE)
+    {
+      tree old_fieldname = TREE_VALUE (TREE_VALUE (old_counted_by));
+      if (strcmp (IDENTIFIER_POINTER (old_fieldname),
+		  IDENTIFIER_POINTER (argval)) != 0)
+	{
+	  error_at (DECL_SOURCE_LOCATION (decl),
+		    "%<counted_by%> argument %qE conflicts with"
+		    " previous declaration %qE", argval, old_fieldname);
+	  *no_add_attrs = true;
+	}
+    }
+
+  return NULL_TREE;
+}
+
 /* Handle a "weak" attribute; arguments as in
    struct attribute_spec.handler.  */
 
@@ -3143,13 +3210,14 @@ handle_copy_attribute (tree *node, tree name, tree args,
   if (ref == error_mark_node)
     return NULL_TREE;
 
+  location_t loc = input_location;
+  if (DECL_P (decl))
+    loc = DECL_SOURCE_LOCATION (decl);
   if (TREE_CODE (ref) == STRING_CST)
     {
       /* Explicitly handle this case since using a string literal
 	 as an argument is a likely mistake.  */
-      error_at (DECL_SOURCE_LOCATION (decl),
-		"%qE attribute argument cannot be a string",
-		name);
+      error_at (loc, "%qE attribute argument cannot be a string", name);
       return NULL_TREE;
     }
 
@@ -3160,10 +3228,8 @@ handle_copy_attribute (tree *node, tree name, tree args,
       /* Similar to the string case, since some function attributes
 	 accept literal numbers as arguments (e.g., alloc_size or
 	 nonnull) using one here is a likely mistake.  */
-      error_at (DECL_SOURCE_LOCATION (decl),
-		"%qE attribute argument cannot be a constant arithmetic "
-		"expression",
-		name);
+      error_at (loc, "%qE attribute argument cannot be a constant arithmetic "
+		"expression", name);
       return NULL_TREE;
     }
 
@@ -3171,12 +3237,11 @@ handle_copy_attribute (tree *node, tree name, tree args,
     {
       /* Another possible mistake (but indirect self-references aren't
 	 and diagnosed and shouldn't be).  */
-      if (warning_at (DECL_SOURCE_LOCATION (decl), OPT_Wattributes,
+      if (warning_at (loc, OPT_Wattributes,
 		      "%qE attribute ignored on a redeclaration "
-		      "of the referenced symbol",
-		      name))
-	inform (DECL_SOURCE_LOCATION (node[1]),
-		"previous declaration here");
+		      "of the referenced symbol", name)
+	  && DECL_P (node[1]))
+	inform (DECL_SOURCE_LOCATION (node[1]), "previous declaration here");
       return NULL_TREE;
     }
 
@@ -3196,7 +3261,8 @@ handle_copy_attribute (tree *node, tree name, tree args,
 	ref = TREE_OPERAND (ref, 1);
       else
 	break;
-    } while (!DECL_P (ref));
+    }
+  while (!DECL_P (ref));
 
   /* For object pointer expressions, consider those to be requests
      to copy from their type, such as in:
@@ -3228,8 +3294,7 @@ handle_copy_attribute (tree *node, tree name, tree args,
 	     to a variable, or variable attributes to a function.  */
 	  if (warning (OPT_Wattributes,
 		       "%qE attribute ignored on a declaration of "
-		       "a different kind than referenced symbol",
-		       name)
+		       "a different kind than referenced symbol", name)
 	      && DECL_P (ref))
 	    inform (DECL_SOURCE_LOCATION (ref),
 		    "symbol %qD referenced by %qD declared here", ref, decl);
@@ -3279,9 +3344,7 @@ handle_copy_attribute (tree *node, tree name, tree args,
     }
   else if (!TYPE_P (decl))
     {
-      error_at (DECL_SOURCE_LOCATION (decl),
-		"%qE attribute must apply to a declaration",
-		name);
+      error_at (loc, "%qE attribute must apply to a declaration", name);
       return NULL_TREE;
     }
 
@@ -5975,6 +6038,10 @@ handle_optimize_attribute (tree *node, tree name, tree args,
       if (prev_target_node != target_node)
 	DECL_FUNCTION_SPECIFIC_TARGET (*node) = target_node;
 
+      /* Also update the cgraph_node, if it's already built.  */
+      if (cgraph_node *cn = cgraph_node::get (*node))
+	cn->semantic_interposition = flag_semantic_interposition;
+
       /* Restore current options.  */
       cl_optimization_restore (&global_options, &global_options_set,
 			       &cur_opts);
@@ -6248,7 +6315,7 @@ handle_objc_nullability_attribute (tree *node, tree name, tree args,
 	      || strcmp (TREE_STRING_POINTER (val), "resettable") == 0))
     *no_add_attrs = false; /* OK */
   else if (val != error_mark_node)
-    error ("%qE attribute argument %qE is not recognised", name, val);
+    error ("%qE attribute argument %qE is not recognized", name, val);
 
   return NULL_TREE;
 }

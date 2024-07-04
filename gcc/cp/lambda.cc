@@ -3,7 +3,7 @@
    building RTL.  These routines are used both during actual parsing
    and during the instantiation of template functions.
 
-   Copyright (C) 1998-2023 Free Software Foundation, Inc.
+   Copyright (C) 1998-2024 Free Software Foundation, Inc.
 
    This file is part of GCC.
 
@@ -175,9 +175,7 @@ lambda_function (tree lambda)
   if (CLASSTYPE_TEMPLATE_INSTANTIATION (type)
       && !COMPLETE_OR_OPEN_TYPE_P (type))
     return NULL_TREE;
-  lambda = lookup_member (type, call_op_identifier,
-			  /*protect=*/0, /*want_type=*/false,
-			  tf_warning_or_error);
+  lambda = get_class_binding_direct (type, call_op_identifier);
   if (lambda)
     lambda = STRIP_TEMPLATE (get_first_fn (lambda));
   return lambda;
@@ -225,7 +223,8 @@ lambda_capture_field_type (tree expr, bool explicit_init_p,
 	   outermost CV qualifiers of EXPR.  */
 	type = build_reference_type (type);
       if (uses_parameter_packs (expr))
-	/* Stick with 'auto' even if the type could be deduced.  */;
+	/* Stick with 'auto' even if the type could be deduced.  */
+	TEMPLATE_TYPE_PARAMETER_PACK (auto_node) = true;
       else
 	type = do_auto_deduction (type, expr, auto_node);
     }
@@ -404,8 +403,10 @@ build_capture_proxy (tree member, tree init)
   fn = lambda_function (closure);
   lam = CLASSTYPE_LAMBDA_EXPR (closure);
 
+  object = DECL_ARGUMENTS (fn);
   /* The proxy variable forwards to the capture field.  */
-  object = build_fold_indirect_ref (DECL_ARGUMENTS (fn));
+  if (INDIRECT_TYPE_P (TREE_TYPE (object)))
+    object = build_fold_indirect_ref (object);
   object = finish_non_static_data_member (member, object, NULL_TREE);
   if (REFERENCE_REF_P (object))
     object = TREE_OPERAND (object, 0);
@@ -606,6 +607,16 @@ add_capture (tree lambda, tree id, tree orig_init, bool by_reference_p,
 	  else if (!verify_type_context (input_location,
 					 TCTX_CAPTURE_BY_COPY, type))
 	    return error_mark_node;
+	}
+
+      if (cxx_dialect < cxx20)
+	{
+	  auto_diagnostic_group d;
+	  tree stripped_init = tree_strip_any_location_wrapper (initializer);
+	  if (DECL_DECOMPOSITION_P (stripped_init)
+	      && pedwarn (input_location, OPT_Wc__20_extensions,
+			  "captured structured bindings are a C++20 extension"))
+	    inform (DECL_SOURCE_LOCATION (stripped_init), "declared here");
 	}
     }
 
@@ -834,8 +845,9 @@ lambda_expr_this_capture (tree lambda, int add_capture_p)
 
 	  if (!LAMBDA_FUNCTION_P (containing_function))
 	    {
-	      /* We found a non-lambda function.  */
-	      if (DECL_NONSTATIC_MEMBER_FUNCTION_P (containing_function))
+	      /* We found a non-lambda function.
+		 There is no this pointer in xobj member functions.  */
+	      if (DECL_IOBJ_MEMBER_FUNCTION_P (containing_function))
 		/* First parameter is 'this'.  */
 		init = DECL_ARGUMENTS (containing_function);
 	      break;
@@ -969,7 +981,7 @@ maybe_generic_this_capture (tree object, tree fns)
 	for (lkp_iterator iter (fns); iter; ++iter)
 	  if (((!id_expr && TREE_CODE (*iter) != USING_DECL)
 	       || TREE_CODE (*iter) == TEMPLATE_DECL)
-	      && DECL_NONSTATIC_MEMBER_FUNCTION_P (*iter))
+	      && DECL_IOBJ_MEMBER_FUNCTION_P (*iter))
 	    {
 	      /* Found a non-static member.  Capture this.  */
 	      lambda_expr_this_capture (lam, /*maybe*/-1);
@@ -1012,7 +1024,7 @@ nonlambda_method_basetype (void)
 
       tree fn = TYPE_CONTEXT (type);
       if (!fn || TREE_CODE (fn) != FUNCTION_DECL
-	  || !DECL_NONSTATIC_MEMBER_FUNCTION_P (fn))
+	  || !DECL_IOBJ_MEMBER_FUNCTION_P (fn))
 	/* No enclosing non-lambda method.  */
 	return NULL_TREE;
       if (!LAMBDA_FUNCTION_P (fn))

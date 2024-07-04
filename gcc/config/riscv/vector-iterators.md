@@ -1,6 +1,6 @@
 
 ;; Iterators for RISC-V 'V' Extension for GNU compiler.
-;; Copyright (C) 2022-2023 Free Software Foundation, Inc.
+;; Copyright (C) 2022-2024 Free Software Foundation, Inc.
 ;; Contributed by Juzhe Zhong (juzhe.zhong@rivai.ai), RiVAI Technologies Ltd.
 
 ;; This file is part of GCC.
@@ -102,22 +102,30 @@
   UNSPEC_WREDUC_SUMU
   UNSPEC_WREDUC_SUM_ORDERED
   UNSPEC_WREDUC_SUM_UNORDERED
+  UNSPEC_SELECT_MASK
 ])
 
 (define_c_enum "unspecv" [
   UNSPECV_FRM_RESTORE_EXIT
 ])
 
-(define_mode_iterator VI [
-  RVVM8QI RVVM4QI RVVM2QI RVVM1QI RVVMF2QI RVVMF4QI (RVVMF8QI "TARGET_MIN_VLEN > 32")
+;; Subset of VI with fractional LMUL types
+(define_mode_iterator VI_FRAC [
+  RVVMF2QI RVVMF4QI (RVVMF8QI "TARGET_MIN_VLEN > 32")
+  RVVMF2HI (RVVMF4HI "TARGET_MIN_VLEN > 32")
+  (RVVMF2SI "TARGET_MIN_VLEN > 32")
+])
 
-  RVVM8HI RVVM4HI RVVM2HI RVVM1HI RVVMF2HI (RVVMF4HI "TARGET_MIN_VLEN > 32")
-
-  RVVM8SI RVVM4SI RVVM2SI RVVM1SI (RVVMF2SI "TARGET_MIN_VLEN > 32")
-
+;; Subset of VI with non-fractional LMUL types
+(define_mode_iterator VI_NOFRAC [
+  RVVM8QI RVVM4QI RVVM2QI RVVM1QI
+  RVVM8HI RVVM4HI RVVM2HI RVVM1HI
+  RVVM8SI RVVM4SI RVVM2SI RVVM1SI
   (RVVM8DI "TARGET_VECTOR_ELEN_64") (RVVM4DI "TARGET_VECTOR_ELEN_64")
   (RVVM2DI "TARGET_VECTOR_ELEN_64") (RVVM1DI "TARGET_VECTOR_ELEN_64")
 ])
+
+(define_mode_iterator VI [ VI_NOFRAC (VI_FRAC "!TARGET_XTHEADVECTOR") ])
 
 ;; This iterator is the same as above but with TARGET_VECTOR_ELEN_FP_16
 ;; changed to TARGET_ZVFH.  TARGET_VECTOR_ELEN_FP_16 is also true for
@@ -1566,9 +1574,15 @@
 
 (define_mode_iterator VLS [VLSI VLSF_ZVFHMIN])
 
+(define_mode_iterator VLS_ZVFH [VLSI VLSF])
+
 (define_mode_iterator V [VI VF_ZVFHMIN])
 
+(define_mode_iterator V_ZVFH [VI VF])
+
 (define_mode_iterator V_VLS [V VLS])
+
+(define_mode_iterator V_VLS_ZVFH [V_ZVFH VLS_ZVFH])
 
 (define_mode_iterator V_VLSI [VI VLSI])
 
@@ -3580,11 +3594,6 @@
 (define_code_attr macc_msac [(plus "macc") (minus "msac")])
 (define_code_attr nmsub_nmadd [(plus "nmsub") (minus "nmadd")])
 (define_code_attr nmsac_nmacc [(plus "nmsac") (minus "nmacc")])
-
-(define_code_attr ext_to_rshift [(sign_extend "ashiftrt")
-                                 (zero_extend "lshiftrt")])
-(define_code_attr EXT_TO_RSHIFT [(sign_extend "ASHIFTRT")
-                                 (zero_extend "LSHIFTRT")])
 
 (define_code_iterator and_ior [and ior])
 
